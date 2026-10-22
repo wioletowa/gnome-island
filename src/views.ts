@@ -135,38 +135,80 @@ export function formatElapsed(us: number): string {
     return `${h > 0 ? `${h}:` : ''}${mm}:${String(s).padStart(2, '0')}`;
 }
 
-/** Kinds that show an elapsed timer next to the icon. */
-const TIMED_KINDS: PrivacyKind[] = ['screencast', 'sharing'];
+/** Kinds that show an elapsed timer. */
+const TIMED_KINDS: PrivacyKind[] = ['screencast', 'remote-recording', 'sharing'];
 
-/** Privacy activity in the side bubble: icon, plus a timer for recordings. */
+export interface PrivacyState {
+    kinds: PrivacyKind[];
+    sinceOf(kind: PrivacyKind): number;
+    microphoneMuted: boolean;
+}
+
+/**
+ * Every active privacy activity in the side bubble: one icon per kind
+ * (recording, sharing, camera, microphone) plus a timer for recordings.
+ */
 export const BubbleView = GObject.registerClass(
 class BubbleView extends St.BoxLayout {
-    icon: St.Icon;
+    private _icons = new Map<PrivacyKind, St.Icon>();
+    private _iconBox: St.BoxLayout;
     timer: OdometerType;
-    private _kind: PrivacyKind | null = null;
 
     constructor() {
         super({style_class: 'island-view island-bubble-view', y_align: Clutter.ActorAlign.CENTER});
-        this.icon = new St.Icon({style_class: 'island-privacy-icon', icon_size: 15, y_align: Clutter.ActorAlign.CENTER});
+        this._iconBox = new St.BoxLayout({style_class: 'island-privacy-icons', y_align: Clutter.ActorAlign.CENTER});
         this.timer = new Odometer({style_class: 'island-odometer island-timer', visible: false});
-        this.add_child(this.icon);
+        this.add_child(this._iconBox);
         this.add_child(this.timer);
     }
 
-    update(kind: PrivacyKind | null, since: number) {
-        if (kind !== this._kind) {
-            if (this._kind)
-                this.remove_style_class_name(`island-privacy-${this._kind}`);
-            this._kind = kind;
-            if (kind) {
-                this.icon.icon_name = PRIVACY_ICONS[kind];
-                this.add_style_class_name(`island-privacy-${kind}`);
+    update(state: PrivacyState | null) {
+        const kinds = state?.kinds ?? [];
+        for (const [kind, icon] of this._icons) {
+            if (!kinds.includes(kind)) {
+                icon.destroy();
+                this._icons.delete(kind);
             }
         }
-        const timed = kind !== null && TIMED_KINDS.includes(kind);
-        this.timer.visible = timed;
-        if (timed)
-            this.timer.setText(formatElapsed(GLib.get_monotonic_time() - since));
+        kinds.forEach((kind, index) => {
+            let icon = this._icons.get(kind);
+            if (!icon) {
+                icon = new St.Icon({
+                    style_class: `island-privacy-icon island-privacy-${kind}`,
+                    icon_size: 15,
+                    y_align: Clutter.ActorAlign.CENTER,
+                });
+                this._icons.set(kind, icon);
+                this._iconBox.add_child(icon);
+                if (this.mapped) {
+                    // New activity pops in next to the existing ones.
+                    icon.set_pivot_point(0.5, 0.5);
+                    icon.set_scale(0.2, 0.2);
+                    icon.opacity = 0;
+                    icon.ease({
+                        scaleX: 1, scaleY: 1, opacity: 255,
+                        duration: 380, mode: Clutter.AnimationMode.EASE_OUT_BACK,
+                    });
+                }
+            }
+            this._iconBox.set_child_at_index(icon, index);
+            const muted = kind === 'microphone' && state!.microphoneMuted;
+            icon.icon_name = muted ? 'microphone-sensitivity-muted-symbolic' : PRIVACY_ICONS[kind];
+            if (muted)
+                icon.add_style_class_name('island-privacy-muted');
+            else
+                icon.remove_style_class_name('island-privacy-muted');
+        });
+
+        const timed = kinds.find(k => TIMED_KINDS.includes(k));
+        this.timer.visible = !!timed;
+        if (timed) {
+            this.timer.setText(formatElapsed(GLib.get_monotonic_time() - state!.sinceOf(timed)));
+            // Colour the timer like the activity it times.
+            for (const k of TIMED_KINDS)
+                this.timer.remove_style_class_name(`island-privacy-${k}`);
+            this.timer.add_style_class_name(`island-privacy-${timed}`);
+        }
     }
 });
 

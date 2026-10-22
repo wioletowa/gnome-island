@@ -6,13 +6,14 @@ import Shell from 'gi://Shell';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as Volume from 'resource:///org/gnome/shell/ui/status/volume.js';
 
-export type PrivacyKind = 'screencast' | 'sharing' | 'camera' | 'microphone';
+export type PrivacyKind = 'screencast' | 'remote-recording' | 'sharing' | 'camera' | 'microphone';
 
 /** Highest priority first; the island shows the first active kind. */
-const PRIORITY: PrivacyKind[] = ['screencast', 'sharing', 'camera', 'microphone'];
+const PRIORITY: PrivacyKind[] = ['screencast', 'remote-recording', 'sharing', 'camera', 'microphone'];
 
 export const PRIVACY_ICONS: Record<PrivacyKind, string> = {
     screencast: 'media-record-symbolic',
+    'remote-recording': 'media-record-symbolic',
     sharing: 'screen-shared-symbolic',
     camera: 'camera-web-symbolic',
     microphone: 'audio-input-microphone-symbolic',
@@ -36,6 +37,7 @@ export const PrivacyMonitor = GObject.registerClass({
     private _cameraMonitor: any;
     private _mixer: Gvc.MixerControl;
     private _handles = new Set<any>();
+    private _micMuted = false;
 
     constructor() {
         super();
@@ -44,16 +46,19 @@ export const PrivacyMonitor = GObject.registerClass({
             this._set('screencast', (Main.screenshotUI as any).screencast_in_progress), this);
         this._set('screencast', (Main.screenshotUI as any).screencast_in_progress, false);
 
-        // Screen sharing / remote recording through the portal.
+        // Screen sharing / remote recording through the portal. Handles that
+        // already exist are only known to GNOME's own indicators.
         const controller = (global.backend as any).get_remote_access_controller?.();
-        controller?.connectObject('new-handle', (_c: unknown, handle: any) => {
-            this._handles.add(handle);
-            handle.connectObject('stopped', () => {
-                this._handles.delete(handle);
-                this._syncHandles();
-            }, this);
-            this._syncHandles();
-        }, this);
+        controller?.connectObject('new-handle', (_c: unknown, handle: any) =>
+            this._addHandle(handle), this);
+        const statusArea = Main.panel.statusArea as any;
+        const existing = [
+            ...(statusArea.screenSharing?._handles ?? []),
+            ...(statusArea.quickSettings?._remoteAccess?._handles ?? []),
+        ];
+        for (const handle of existing)
+            this._addHandle(handle, false);
+        this._syncHandles(false);
 
         this._cameraMonitor = new (Shell as any).CameraMonitor();
         this._cameraMonitor.connectObject('notify::cameras-in-use', () =>
@@ -69,16 +74,33 @@ export const PrivacyMonitor = GObject.registerClass({
         this._syncMicrophone(false);
     }
 
-    private _syncHandles() {
-        // The screenshot UI's own screencast is reported separately.
-        let n = 0;
+    private _addHandle(handle: any, sync = true) {
+        if (this._handles.has(handle))
+            return;
+        this._handles.add(handle);
+        handle.connectObject('stopped', () => {
+            this._handles.delete(handle);
+            this._syncHandles();
+        }, this);
+        if (sync)
+            this._syncHandles();
+    }
+
+    private _syncHandles(notify = true) {
+        let sharing = 0;
+        let recording = 0;
         for (const h of this._handles) {
-            if (h.is_recording !== false)
-                n++;
+            if (h.isRecording)
+                recording++;
+            else
+                sharing++;
         }
+        // The screenshot UI's own screencast also shows up as a recording
+        // handle; it is reported through screenshotUI instead.
         if ((Main.screenshotUI as any).screencast_in_progress)
-            n = Math.max(0, n - 1);
-        this._set('sharing', n > 0);
+            recording = Math.max(0, recording - 1);
+        this._set('sharing', sharing > 0, notify);
+        this._set('remote-recording', recording > 0, notify);
     }
 
     private _syncMicrophone(notify = true) {
@@ -92,7 +114,19 @@ export const PrivacyMonitor = GObject.registerClass({
         } catch (e) {
             logError(e as object, 'gnome-island: microphone state');
         }
+        let muted = false;
+        try {
+            muted = !!this._mixer.get_default_source()?.is_muted;
+        } catch {}
+        const mutedChanged = muted !== this._micMuted;
+        this._micMuted = muted;
         this._set('microphone', active, notify);
+        if (mutedChanged && active && notify)
+            this.emit('changed');
+    }
+
+    get microphoneMuted() {
+        return this._micMuted;
     }
 
     private _set(kind: PrivacyKind, on: boolean, notify = true) {
@@ -106,19 +140,28 @@ export const PrivacyMonitor = GObject.registerClass({
             this.emit('changed');
     }
 
+    /** All active kinds, most important first. */
+    get kinds(): PrivacyKind[] {
+        return PRIORITY.filter(k => this._active.has(k));
+    }
+
     get kind(): PrivacyKind | null {
-        return PRIORITY.find(k => this._active.has(k)) ?? null;
+        return this.kinds[0] ?? null;
     }
 
-    get since(): number {
-        const k = this.kind;
-        return k ? this._active.get(k)! : 0;
+    /** Start time (monotonic µs) of an active kind. */
+    sinceOf(kind: PrivacyKind): number {
+        return this._active.get(kind) ?? 0;
     }
 
-    /** Stops what can be stopped from the island (our own screencast). */
+    /** Stops what can be stopped from the island: screencasts and screen sharing. */
     stop() {
-        if (this.kind === 'screencast')
+        if (this._active.has('screencast'))
             (Main.screenshotUI as any).stopScreencast();
+        for (const h of [...this._handles]) {
+            if (!h.isRecording)
+                h.stop();
+        }
     }
 
     destroy() {

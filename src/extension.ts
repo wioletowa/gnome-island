@@ -339,7 +339,6 @@ export default class IslandExtension extends Extension {
         const state = this._media?.state ?? null;
         const mediaVisible = this._mediaVisible();
         const kind = this._privacy?.kind ?? null;
-        const since = this._privacy?.since ?? 0;
 
         for (const host of this._hosts) {
             host.media.cover.setUri(state?.coverUri ?? null);
@@ -347,7 +346,7 @@ export default class IslandExtension extends Extension {
             const showEnds = mediaVisible;
             host.rowCover.visible = showEnds;
             host.rowBars.visible = showEnds && this._config.visualizerEnabled;
-            host.bubble.update(kind, since);
+            host.bubble.update(this._privacy);
             // The privacy bubble always lives beside the island, never inside it.
             host.island.setBubbleView('right', kind ? 'privacy' : null);
 
@@ -382,7 +381,7 @@ export default class IslandExtension extends Extension {
             host.clock.time.setText(time);
             host.media.clock.time.setText(time);
             if (this._privacy)
-                host.bubble.update(this._privacy.kind, this._privacy.since);
+                host.bubble.update(this._privacy);
         }
         this._expandedClock?.time.setText(time);
         const date = config.dateFormat ? now.format(config.dateFormat) : null;

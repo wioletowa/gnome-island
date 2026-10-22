@@ -85,9 +85,15 @@
 }
 
 .island-privacy-screencast { color: #ff453a; }
+.island-privacy-remote-recording { color: #ff453a; }
+
+.island-privacy-icons {
+  spacing: 8px;
+}
 .island-privacy-sharing { color: #ff9f0a; }
 .island-privacy-camera { color: #30d158; }
 .island-privacy-microphone { color: #ff9f0a; }
+.island-privacy-icon.island-privacy-muted { color: rgba(255, 255, 255, 0.55); }
 
 .island-bubble-view {
   spacing: 6px;

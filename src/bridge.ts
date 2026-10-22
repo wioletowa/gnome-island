@@ -14,6 +14,11 @@ export type SlotName = 'workspaces' | 'clock' | 'keyboard' | 'tray' | 'quick-set
 export type SideSlot = Exclude<SlotName, 'clock'>;
 export const SIDE_SLOTS: SideSlot[] = ['workspaces', 'keyboard', 'tray', 'quick-settings'];
 
+/** Panel roles replaced by the island's privacy bubble. */
+const HIDDEN_ROLES = ['screenRecording', 'screenSharing'];
+/** Quick Settings system indicators replaced by the privacy bubble. */
+const QS_PRIVACY_INDICATORS = ['_remoteAccess', '_camera', '_volumeInput'];
+
 const ROLE_SLOTS: Record<string, SlotName> = {
     activities: 'workspaces',
     dateMenu: 'clock',
@@ -106,6 +111,10 @@ export class PanelBridge {
     private _signals: [GObject.Object, number][] = [];
     private _idleId = 0;
     private _clock: ClockWidgetType | null = null;
+    /** Unparented holder for indicators the island replaces. */
+    private _sink = new St.BoxLayout();
+    private _qsWanted = new Map<Clutter.Actor, boolean>();
+    private _forcing = false;
     private _pad: Clutter.Actor | null = null;
 
     constructor() {
@@ -114,6 +123,12 @@ export class PanelBridge {
         for (const box of this._boxes) {
             this._signals.push([box, box.connect('child-added', () => this._queueSync())]);
         }
+        // Quick Settings builds its indicators asynchronously, so also catch
+        // ones that appear after we start.
+        const qsBox = (Main.panel.statusArea as any).quickSettings?._indicators;
+        if (qsBox)
+            this._signals.push([qsBox, qsBox.connect('child-added', () => this._hideQuickSettingsPrivacy())]);
+        this._hideQuickSettingsPrivacy();
     }
 
     /** Moves all indicators into `row` (called when an island expands). */
@@ -194,13 +209,53 @@ export class PanelBridge {
         });
     }
 
-    private _slotFor(actor: Clutter.Actor): SlotName {
+    private _slotFor(actor: Clutter.Actor): SlotName | 'hidden' {
         const statusArea = Main.panel.statusArea as Record<string, any>;
         for (const role in statusArea) {
-            if (statusArea[role]?.container === actor)
+            if (statusArea[role]?.container === actor) {
+                // Recording/sharing are shown by the island's privacy bubble.
+                if (HIDDEN_ROLES.includes(role))
+                    return 'hidden';
                 return ROLE_SLOTS[role] ?? 'tray';
+            }
         }
         return 'tray';
+    }
+
+    /**
+     * Keeps GNOME's own privacy icons (camera, microphone, remote access)
+     * out of the Quick Settings button; the island's bubble shows them.
+     * Their intended visibility is remembered so disable can restore it.
+     */
+    private _hideQuickSettingsPrivacy() {
+        const qs = (Main.panel.statusArea as any).quickSettings;
+        for (const name of QS_PRIVACY_INDICATORS) {
+            const ind: Clutter.Actor | undefined = qs?.[name];
+            if (!ind || this._qsWanted.has(ind))
+                continue;
+            this._qsWanted.set(ind, ind.visible);
+            ind.connectObject('notify::visible', () => {
+                if (this._forcing)
+                    return;
+                this._qsWanted.set(ind, ind.visible);
+                if (ind.visible) {
+                    this._forcing = true;
+                    ind.visible = false;
+                    this._forcing = false;
+                }
+            }, this);
+            this._forcing = true;
+            ind.visible = false;
+            this._forcing = false;
+        }
+    }
+
+    private _restoreQuickSettingsPrivacy() {
+        for (const [ind, wanted] of this._qsWanted) {
+            ind.disconnectObject(this);
+            ind.visible = wanted;
+        }
+        this._qsWanted.clear();
     }
 
     private _sync() {
@@ -213,7 +268,8 @@ export class PanelBridge {
                     this._origins.set(child, {box, index});
                     child.connectObject('destroy', () => this._origins.delete(child), this);
                 }
-                const slot = this._row!.slots.get(this._slotFor(child))!;
+                const name = this._slotFor(child);
+                const slot = name === 'hidden' ? this._sink : this._row!.slots.get(name)!;
                 box.remove_child(child);
                 slot.add_child(child);
             });
@@ -227,6 +283,7 @@ export class PanelBridge {
         for (const [obj, id] of this._signals)
             obj.disconnect(id);
         this._signals = [];
+        this._restoreQuickSettingsPrivacy();
         this.setClock(null);
 
         // Put indicators back in their original boxes, in original order.
@@ -239,5 +296,6 @@ export class PanelBridge {
         }
         this._origins.clear();
         this._row = null;
+        this._sink.destroy();
     }
 }
