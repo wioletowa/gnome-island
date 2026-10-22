@@ -125,6 +125,10 @@
       <default>'#ffffff'</default>
       <summary>Island text colour</summary>
     </key>
+    <key name="use-system-accent" type="b">
+      <default>true</default>
+      <summary>Use the GNOME accent colour (visualizer, indicators)</summary>
+    </key>
     <key name="accent-color" type="s">
       <default>'#30d158'</default>
       <summary>Accent colour (visualizer, indicators)</summary>

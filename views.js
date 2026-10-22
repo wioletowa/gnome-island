@@ -288,18 +288,37 @@ class OsdView extends St.BoxLayout {
 
 const DOT = 7;
 const ACTIVE_DOT = 22;
+const DOT_SPACING = 6;
 
-/** Workspace switch feedback: dots with the active one stretched, like GNOME's top bar. */
+/**
+ * Workspace switch feedback: dots with the active one stretched, like
+ * GNOME's top bar. Everything scales down to fit `maxWidth`, so showing it
+ * never changes the island's size.
+ */
 export const WorkspaceDots = GObject.registerClass(
 class WorkspaceDots extends St.BoxLayout {
     _dots = [];
     _active = -1;
+    _sizes = {dot: DOT, active: ACTIVE_DOT};
 
     constructor() {
         super({style_class: 'island-view island-workspace-dots', y_align: Clutter.ActorAlign.CENTER});
     }
 
-    show_(active, count) {
+    _fit(count, maxWidth) {
+        const full = ACTIVE_DOT + (count - 1) * (DOT + DOT_SPACING);
+        const k = Math.min(1, maxWidth / full);
+        const dot = Math.max(3, Math.floor(DOT * k));
+        const spacing = Math.max(2, Math.floor(DOT_SPACING * k));
+        // Whatever is left goes to the active dot, but never less than 2 dots.
+        const active = Math.max(dot * 2, Math.min(ACTIVE_DOT, Math.floor(maxWidth - (count - 1) * (dot + spacing))));
+        this.set_style(`spacing: ${spacing}px;`);
+        this._sizes = {dot, active};
+    }
+
+    show_(active, count, maxWidth = Infinity) {
+        this._fit(count, maxWidth);
+        const {dot: dotSize, active: activeSize} = this._sizes;
         const animate = this.mapped && this._dots.length === count;
         if (this._dots.length !== count) {
             for (const d of this._dots)
@@ -309,8 +328,8 @@ class WorkspaceDots extends St.BoxLayout {
                 const dot = new St.Widget({
                     style_class: 'island-workspace-dot',
                     y_align: Clutter.ActorAlign.CENTER,
-                    width: DOT,
-                    height: DOT,
+                    width: dotSize,
+                    height: dotSize,
                     opacity: 110,
                 });
                 this._dots.push(dot);
@@ -318,19 +337,49 @@ class WorkspaceDots extends St.BoxLayout {
             }
             // Start from the previous workspace so the stretch slides over.
             if (this._active >= 0 && this._active < count) {
-                this._dots[this._active].width = ACTIVE_DOT;
+                this._dots[this._active].width = activeSize;
                 this._dots[this._active].opacity = 255;
             }
         }
         this._active = active;
         this._dots.forEach((dot, i) => {
             const on = i === active;
-            const props = {width: on ? ACTIVE_DOT : DOT, opacity: on ? 255 : 110};
+            dot.height = dotSize;
+            const props = {width: on ? activeSize : dotSize, opacity: on ? 255 : 110};
             dot.remove_all_transitions();
             if (animate || dot.mapped)
                 dot.ease({...props, duration: 260, mode: Clutter.AnimationMode.EASE_OUT_CUBIC});
             else
                 dot.set(props);
         });
+    }
+});
+
+/**
+ * Keyboard layout switch feedback: the new language replaces the clock for
+ * a moment. Uses the full name when it fits the capsule, else the short one.
+ */
+export const LanguageView = GObject.registerClass(
+class LanguageView extends St.Bin {
+    constructor() {
+        super({style_class: 'island-view island-language-view', y_align: Clutter.ActorAlign.CENTER});
+        this._label = new St.Label({style_class: 'island-language', y_align: Clutter.ActorAlign.CENTER});
+        this._label.clutter_text.ellipsize = Pango.EllipsizeMode.END;
+        this.set_child(this._label);
+    }
+
+    show_(displayName, shortName, maxWidth = Infinity) {
+        this._label.text = displayName;
+        // Measure without the previous max-width, or it never looks too wide.
+        this._label.set_style(null);
+        const [, natW] = this._label.get_preferred_width(-1);
+        if (natW > maxWidth)
+            this._label.text = shortName.toUpperCase();
+        this._label.set_style(Number.isFinite(maxWidth) ? `max-width: ${Math.floor(maxWidth)}px;` : null);
+        // A quick pop so the change is noticeable.
+        this._label.set_pivot_point(0.5, 0.5);
+        this._label.remove_all_transitions();
+        this._label.set_scale(0.7, 0.7);
+        this._label.ease({scaleX: 1, scaleY: 1, duration: 420, mode: Clutter.AnimationMode.EASE_OUT_BACK});
     }
 });

@@ -6,6 +6,7 @@ import St from 'gi://St';
 import {Extension, gettext as _} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as WorkspaceSwitcherPopup from 'resource:///org/gnome/shell/ui/workspaceSwitcherPopup.js';
+import * as Keyboard from 'resource:///org/gnome/shell/ui/status/keyboard.js';
 
 import {Config} from './config.js';
 import {Island} from './island.js';
@@ -17,7 +18,7 @@ import {captureUsers} from './pipewire.js';
 import {NotificationWatcher} from './notifications.js';
 import {
     BubbleView, ClockWidget, CoverArt, MediaView, MessagesDotMirror,
-    NotificationView, OsdView, WorkspaceDots,
+    LanguageView, NotificationView, OsdView, WorkspaceDots,
 } from './views.js';
 import {SpectrumAnalyzer, VisualizerBars} from './visualizer.js';
 
@@ -25,6 +26,8 @@ import {SpectrumAnalyzer, VisualizerBars} from './visualizer.js';
 const OSD_TIMEOUT = 1500;
 /** How long the workspace dots replace the collapsed island. */
 const WORKSPACE_TIMEOUT = 1000;
+/** How long a new keyboard layout replaces the clock. */
+const LANGUAGE_TIMEOUT = 2000;
 
 /** Hover delay before the privacy tooltip appears. */
 const TOOLTIP_DELAY = 250;
@@ -54,12 +57,13 @@ export default class IslandExtension extends Extension {
     _notifQueue = [];
     _notifActive = false;
     _notifTimeoutId = 0;
-    _wsActive = false;
+    /** Short-lived view over the clock: 'workspaces', 'language' or null. */
+    _transient = null;
     _tooltip = null;
     _tooltipId = 0;
     _tooltipKind = null;
     _tooltipCancel = null;
-    _wsTimeoutId = 0;
+    _transientId = 0;
     _origShowOsd = null;
     _origWsDisplay = null;
 
@@ -102,6 +106,18 @@ export default class IslandExtension extends Extension {
         this._patchWorkspacePopup();
         global.workspace_manager.connectObject('active-workspace-changed',
             () => this._onWorkspaceChanged(), this);
+        Keyboard.getInputSourceManager().connectObject('current-source-changed',
+            (m, old) => this._onInputSourceChanged(m, old), this);
+        // Follow the GNOME accent colour when the user changes it.
+        St.Settings.get().connectObject('notify::accent-color', () => {
+            // The theme context picks the new colour up in the same main
+            // loop iteration; read it afterwards.
+            GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
+                for (const host of this._hosts)
+                    this._applyColors(host);
+                return GLib.SOURCE_REMOVE;
+            });
+        }, this);
 
         Main.layoutManager.connectObject('monitors-changed', () => this._buildHosts(), this);
         global.stage.connectObject('captured-event', (_s, e) =>
@@ -114,14 +130,16 @@ export default class IslandExtension extends Extension {
 
     disable() {
         this._cancelCollapse();
-        for (const id of [this._pausedTimeoutId, this._notifTimeoutId, this._wsTimeoutId]) {
+        for (const id of [this._pausedTimeoutId, this._notifTimeoutId, this._transientId]) {
             if (id)
                 GLib.source_remove(id);
         }
         this._pausedTimeoutId = 0;
         this._notifTimeoutId = 0;
-        this._wsTimeoutId = 0;
-        this._wsActive = false;
+        this._transientId = 0;
+        this._transient = null;
+        Keyboard.getInputSourceManager().disconnectObject(this);
+        St.Settings.get().disconnectObject(this);
         global.workspace_manager.disconnectObject(this);
         this._unpatchWorkspacePopup();
         this._unpatchOsd();
@@ -241,6 +259,9 @@ export default class IslandExtension extends Extension {
         const workspaces = new WorkspaceDots();
         island.addView('workspaces', workspaces, {keepSize: true});
 
+        const language = new LanguageView();
+        island.addView('language', language, {keepSize: true});
+
         // GNOME's unread dot, mirrored into the right padding of the
         // collapsed island so it never changes its size.
         island.setEdgeActor(new MessagesDotMirror(dot), ['clock', 'media']);
@@ -259,7 +280,7 @@ export default class IslandExtension extends Extension {
 
         const host = {
             island, row, rowCover, rowBars, clock, media, notification, bubble,
-            osd, osdTimeoutId: 0, workspaces, container: null, monitorIndex,
+            osd, osdTimeoutId: 0, workspaces, language, container: null, monitorIndex,
         };
         this._applyColors(host);
 
@@ -355,8 +376,8 @@ export default class IslandExtension extends Extension {
                 continue;
             }
             let view = 'clock';
-            if (this._wsActive)
-                view = 'workspaces';
+            if (this._transient)
+                view = this._transient;
             else if (this._notifActive)
                 view = 'notification';
             else if (mediaVisible)
@@ -702,14 +723,30 @@ export default class IslandExtension extends Extension {
         const wm = global.workspace_manager;
         const active = wm.get_active_workspace_index();
         for (const host of this._hosts)
-            host.workspaces.show_(active, wm.n_workspaces);
-        this._wsActive = true;
+            host.workspaces.show_(active, wm.n_workspaces, host.island.contentWidth);
+        this._showTransient('workspaces', WORKSPACE_TIMEOUT);
+    }
+
+    _onInputSourceChanged(manager, oldSource) {
+        // oldSource is null when the source list is (re)loaded, e.g. at
+        // startup; only react to a real switch.
+        const source = manager.currentSource;
+        if (!oldSource || !source)
+            return;
+        for (const host of this._hosts)
+            host.language.show_(source.displayName, source.shortName, host.island.contentWidth);
+        this._showTransient('language', LANGUAGE_TIMEOUT);
+    }
+
+    /** Shows `name` instead of the clock for `ms`, without resizing the island. */
+    _showTransient(name, ms) {
+        this._transient = name;
         this._updateViews();
-        if (this._wsTimeoutId)
-            GLib.source_remove(this._wsTimeoutId);
-        this._wsTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, WORKSPACE_TIMEOUT, () => {
-            this._wsTimeoutId = 0;
-            this._wsActive = false;
+        if (this._transientId)
+            GLib.source_remove(this._transientId);
+        this._transientId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, ms, () => {
+            this._transientId = 0;
+            this._transient = null;
             this._updateViews();
             return GLib.SOURCE_REMOVE;
         });
@@ -775,6 +812,7 @@ export default class IslandExtension extends Extension {
         case 'background-color':
         case 'foreground-color':
         case 'accent-color':
+        case 'use-system-accent':
             for (const host of this._hosts)
                 this._applyColors(host);
             break;

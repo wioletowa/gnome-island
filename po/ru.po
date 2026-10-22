@@ -237,3 +237,12 @@ msgstr "Микрофон"
 
 msgid "Microphone (muted)"
 msgstr "Микрофон (выключен)"
+
+msgid "Use GNOME accent colour"
+msgstr "Акцентный цвет GNOME"
+
+msgid "Visualizer and indicators follow the system accent"
+msgstr "Визуализатор и индикаторы берут системный акцентный цвет"
+
+msgid "Custom accent"
+msgstr "Свой акцентный цвет"

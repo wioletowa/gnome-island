@@ -1,4 +1,10 @@
-import Gio from 'gi://Gio';
+import St from 'gi://St';
+
+/** GNOME's current accent colour as a CSS colour. */
+export function systemAccent() {
+    const [accent] = St.ThemeContext.get_for_stage(global.stage).get_accent_color();
+    return `rgb(${accent.red}, ${accent.green}, ${accent.blue})`;
+}
 
 /** Typed read access to the extension's GSettings. */
 export class Config {
@@ -84,7 +90,7 @@ export class Config {
         return {
             background: s.get_string('background-color'),
             foreground: s.get_string('foreground-color'),
-            accent: s.get_string('accent-color'),
+            accent: s.get_boolean('use-system-accent') ? systemAccent() : s.get_string('accent-color'),
         };
     }
 }

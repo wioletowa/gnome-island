@@ -213,6 +213,7 @@ export const Island = GObject.registerClass({
 }, class Island extends St.Widget {
     _views = new Map();
     _edgeViews = [];
+    _allocWidth = 0;
     _current = null;
     _blurEnabled = true;
     _destroyed = false;
@@ -323,6 +324,7 @@ export const Island = GObject.registerClass({
         this.set_allocation(box);
         const width = box.get_width();
         const m = this._metrics;
+        this._allocWidth = width;
 
         // Even sizes around an integer centre: both edges move by the same
         // whole pixel each frame, so nothing wobbles.
@@ -360,6 +362,11 @@ export const Island = GObject.registerClass({
 
         // Natural size changes (new track title, clock width) retarget the capsule.
         actor.connect('notify::allocation', () => this._queueRetarget());
+    }
+
+    /** Room for content inside the capsule at its current target size. */
+    get contentWidth() {
+        return Math.max(0, 2 * Math.round(this._w.target / 2) - 2 * this._metrics.hPadding);
     }
 
     /**
@@ -431,13 +438,16 @@ export const Island = GObject.registerClass({
             const expanded = this._current === 'expanded';
             const baseH = expanded ? m.expandedHeight : m.compactHeight;
             const h = Math.max(baseH, entry.height ?? 0);
-            const maxW = Math.max(h, this.width - 2 * m.hPadding);
+            // Use the last real allocation: while a relayout is pending,
+            // this.width reports our preferred width (0) and would clamp the
+            // capsule to a circle for a frame, kicking the spring.
+            const maxW = this._allocWidth > 0
+                ? Math.max(h, this._allocWidth - 2 * m.hPadding) : Infinity;
             const pad = expanded ? 4 : m.hPadding;
             const w = Math.min(maxW, Math.max(h, natW + 2 * pad));
             if (entry.keepSize) {
-                // Transient views (workspace switch) reuse the current
-                // capsule and only grow if they really do not fit.
-                this._w.target = Math.max(this._w.target, w);
+                // Transient views (workspace switch) keep the current
+                // capsule exactly; they fit themselves into contentWidth.
             } else {
                 this._w.target = w;
                 this._h.target = h;

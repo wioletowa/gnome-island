@@ -263,7 +263,11 @@ export default class IslandPreferences extends ExtensionPreferences {
         look.add(colors);
         colors.add(colorRow(settings, 'background-color', _('Background')));
         colors.add(colorRow(settings, 'foreground-color', _('Text')));
-        colors.add(colorRow(settings, 'accent-color', _('Accent (visualizer)')));
+        colors.add(switchRow(settings, 'use-system-accent', _('Use GNOME accent colour'),
+            _('Visualizer and indicators follow the system accent')));
+        const accentRow = colorRow(settings, 'accent-color', _('Custom accent'));
+        settings.bind('use-system-accent', accentRow, 'sensitive', Gio.SettingsBindFlags.INVERT_BOOLEAN);
+        colors.add(accentRow);
 
         // --- Behaviour -----------------------------------------------------
         const behaviour = new Adw.PreferencesPage({title: _('Behavior'), icon_name: 'preferences-system-symbolic'});
