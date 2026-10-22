@@ -2,8 +2,11 @@
   "uuid": "gnome-island@whyoolw",
   "name": "Island",
   "description": "Dynamic Island for GNOME: replaces the top bar with a floating pill that morphs for media, recordings and notifications.",
-  "shell-version": ["51"],
+  "shell-version": [
+    "51"
+  ],
   "url": "https://github.com/wioletowa/gnome-island",
   "settings-schema": "org.gnome.shell.extensions.gnome-island",
-  "version-name": "0.1.0"
+  "version-name": "0.1.0",
+  "gettext-domain": "gnome-island"
 }
