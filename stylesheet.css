@@ -1,0 +1,40 @@
+.island-bar {
+  background-color: transparent;
+}
+
+.island-pill {
+  background-color: #000000;
+  color: #ffffff;
+  border-radius: 999px;
+  font-weight: bold;
+}
+
+.island-pill:focus {
+  /* The pill takes key focus for Esc; no focus ring. */
+  box-shadow: none;
+}
+
+.island-odometer {
+  font-feature-settings: "tnum";
+  font-weight: bold;
+}
+
+.island-compact-clock {
+  font-size: 1.05em;
+}
+
+/* Our expanded row is named "panel" to inherit the stock indicator styling;
+   override the bar look of #panel itself. */
+#panel.island-expanded-row {
+  background-color: transparent;
+  spacing: 2px;
+  transition-duration: 0ms;
+}
+
+.island-slot {
+  spacing: 0;
+}
+
+#panel.island-expanded-row .island-odometer.clock {
+  padding: 0 0.6em;
+}

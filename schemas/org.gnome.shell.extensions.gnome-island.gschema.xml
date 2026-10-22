@@ -1,0 +1,129 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.gnome.shell.extensions.gnome-island" path="/org/gnome/shell/extensions/gnome-island/">
+
+    <!-- Geometry -->
+    <key name="top-margin" type="i">
+      <range min="0" max="40"/>
+      <default>6</default>
+      <summary>Gap between the screen edge and the island</summary>
+    </key>
+    <key name="bottom-gap" type="i">
+      <range min="0" max="40"/>
+      <default>4</default>
+      <summary>Reserved space below the island</summary>
+    </key>
+    <key name="compact-height" type="i">
+      <range min="20" max="64"/>
+      <default>32</default>
+      <summary>Height of the collapsed island</summary>
+    </key>
+    <key name="expanded-height" type="i">
+      <range min="20" max="64"/>
+      <default>36</default>
+      <summary>Height of the expanded island</summary>
+    </key>
+    <key name="horizontal-padding" type="i">
+      <range min="0" max="40"/>
+      <default>14</default>
+      <summary>Horizontal padding inside the island</summary>
+    </key>
+    <key name="bubble-gap" type="i">
+      <range min="0" max="40"/>
+      <default>8</default>
+      <summary>Gap between the island and the secondary bubble</summary>
+    </key>
+    <key name="all-monitors" type="b">
+      <default>true</default>
+      <summary>Show the island on every monitor</summary>
+    </key>
+
+    <!-- Clock -->
+    <key name="clock-format" type="s">
+      <default>'%H:%M:%S'</default>
+      <summary>Clock format of the collapsed island (strftime)</summary>
+    </key>
+    <key name="expanded-clock-format" type="s">
+      <default>'%a %e %b  %H:%M:%S'</default>
+      <summary>Clock format of the expanded island (strftime)</summary>
+    </key>
+
+    <!-- Behaviour -->
+    <key name="collapse-delay" type="i">
+      <range min="0" max="10000"/>
+      <default>1500</default>
+      <summary>Delay in ms before collapsing after the pointer leaves</summary>
+    </key>
+    <key name="item-order" type="as">
+      <default>['workspaces', 'clock', 'keyboard', 'tray', 'quick-settings']</default>
+      <summary>Order of items in the expanded island</summary>
+    </key>
+
+    <!-- Animation -->
+    <key name="spring-stiffness" type="d">
+      <range min="20" max="2000"/>
+      <default>320</default>
+      <summary>Spring stiffness</summary>
+    </key>
+    <key name="spring-damping" type="d">
+      <range min="1" max="200"/>
+      <default>26</default>
+      <summary>Spring damping</summary>
+    </key>
+    <key name="spring-mass" type="d">
+      <range min="0.1" max="10"/>
+      <default>1</default>
+      <summary>Spring mass</summary>
+    </key>
+    <key name="blur-transitions" type="b">
+      <default>true</default>
+      <summary>Blur content while it crossfades</summary>
+    </key>
+
+    <!-- Media -->
+    <key name="visualizer-enabled" type="b">
+      <default>true</default>
+      <summary>Show the audio visualizer</summary>
+    </key>
+    <key name="visualizer-bars" type="i">
+      <range min="2" max="12"/>
+      <default>5</default>
+      <summary>Number of visualizer bars</summary>
+    </key>
+    <key name="visualizer-sensitivity" type="d">
+      <range min="0.1" max="5"/>
+      <default>1</default>
+      <summary>Visualizer sensitivity</summary>
+    </key>
+    <key name="paused-media-timeout" type="i">
+      <range min="0" max="600000"/>
+      <default>5000</default>
+      <summary>How long a paused player stays in the island, in ms</summary>
+    </key>
+
+    <!-- Notifications -->
+    <key name="notifications-in-island" type="b">
+      <default>true</default>
+      <summary>Show notifications in the island instead of banners</summary>
+    </key>
+    <key name="notification-duration" type="i">
+      <range min="500" max="20000"/>
+      <default>3500</default>
+      <summary>How long a notification is shown in the island, in ms</summary>
+    </key>
+
+    <!-- Colours -->
+    <key name="background-color" type="s">
+      <default>'#000000'</default>
+      <summary>Island background colour</summary>
+    </key>
+    <key name="foreground-color" type="s">
+      <default>'#ffffff'</default>
+      <summary>Island text colour</summary>
+    </key>
+    <key name="accent-color" type="s">
+      <default>'#30d158'</default>
+      <summary>Accent colour (visualizer, indicators)</summary>
+    </key>
+  </schema>
+</schemalist>
