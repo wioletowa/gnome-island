@@ -43,9 +43,9 @@
       <default>'%H:%M:%S'</default>
       <summary>Clock format of the collapsed island (strftime)</summary>
     </key>
-    <key name="expanded-clock-format" type="s">
-      <default>'%a %e %b  %H:%M:%S'</default>
-      <summary>Clock format of the expanded island (strftime)</summary>
+    <key name="date-format" type="s">
+      <default>'%a %e %b'</default>
+      <summary>Date shown left of the time in the expanded island (strftime, empty to hide)</summary>
     </key>
 
     <!-- Behaviour -->
@@ -54,9 +54,13 @@
       <default>1500</default>
       <summary>Delay in ms before collapsing after the pointer leaves</summary>
     </key>
-    <key name="item-order" type="as">
-      <default>['workspaces', 'clock', 'keyboard', 'tray', 'quick-settings']</default>
-      <summary>Order of items in the expanded island</summary>
+    <key name="items-left" type="as">
+      <default>['workspaces']</default>
+      <summary>Items left of the clock in the expanded island</summary>
+    </key>
+    <key name="items-right" type="as">
+      <default>['keyboard', 'tray', 'quick-settings']</default>
+      <summary>Items right of the clock in the expanded island</summary>
     </key>
 
     <!-- Animation -->

@@ -89,101 +89,162 @@ function colorRow(settings: Gio.Settings, key: string, title: string): Adw.Actio
     return row;
 }
 
-/** Reorderable list of expanded-island items, by drag and drop or buttons. */
-function orderGroup(settings: Gio.Settings): Adw.PreferencesGroup {
-    const group = new Adw.PreferencesGroup({
-        title: _('Expanded island items'),
-        description: _('Drag rows to change the order, left to right.'),
-    });
-    const list = new Gtk.ListBox({selection_mode: Gtk.SelectionMode.NONE, css_classes: ['boxed-list']});
-    group.add(list);
+type Side = 'items-left' | 'items-right';
+const SIDES: Side[] = ['items-left', 'items-right'];
+const SIDE_KEYS = Object.keys(SLOT_LABELS).filter(k => k !== 'clock');
 
-    const read = (): string[] => {
-        const order = settings.get_strv('item-order').filter(k => k in SLOT_LABELS);
-        for (const k of Object.keys(SLOT_LABELS)) {
-            if (!order.includes(k))
-                order.push(k);
+/**
+ * Two reorderable lists (left and right of the always-centred clock).
+ * Rows can be dragged within a list or onto the other one.
+ */
+function sidesGroups(settings: Gio.Settings): Adw.PreferencesGroup[] {
+    const read = (): Record<Side, string[]> => {
+        const seen = new Set<string>();
+        const out = {} as Record<Side, string[]>;
+        for (const side of SIDES) {
+            out[side] = settings.get_strv(side).filter(k => SIDE_KEYS.includes(k) && !seen.has(k) && seen.add(k));
         }
-        return order;
+        for (const k of SIDE_KEYS) {
+            if (!seen.has(k))
+                out['items-right'].push(k);
+        }
+        return out;
     };
 
-    const move = (key: string, to: number) => {
-        const order = read();
-        const from = order.indexOf(key);
-        if (from < 0 || to < 0 || to >= order.length || from === to)
-            return;
-        order.splice(from, 1);
-        order.splice(to, 0, key);
-        settings.set_strv('item-order', order);
+    /** Moves `key` to `side` at `index` (end when index is -1). */
+    const move = (key: string, side: Side, index: number) => {
+        const lists = read();
+        for (const s of SIDES) {
+            const i = lists[s].indexOf(key);
+            if (i >= 0) {
+                lists[s].splice(i, 1);
+                if (s === side && index > i)
+                    index--;
+            }
+        }
+        const target = lists[side];
+        if (index < 0 || index > target.length)
+            index = target.length;
+        target.splice(index, 0, key);
+        for (const s of SIDES)
+            settings.set_strv(s, lists[s]);
     };
+
+    const groups: Adw.PreferencesGroup[] = [];
+    const lists = new Map<Side, Gtk.ListBox>();
 
     const rebuild = () => {
-        let child;
-        while ((child = list.get_first_child()))
-            list.remove(child);
+        const data = read();
+        for (const side of SIDES) {
+            const list = lists.get(side)!;
+            let child;
+            while ((child = list.get_first_child()))
+                list.remove(child);
+            const other: Side = side === 'items-left' ? 'items-right' : 'items-left';
 
-        const order = read();
-        order.forEach((key, index) => {
-            const row = new Adw.ActionRow({title: SLOT_LABELS[key]()});
-            row.add_prefix(new Gtk.Image({icon_name: 'list-drag-handle-symbolic', css_classes: ['dim-label']}));
-            row.add_prefix(new Gtk.Image({icon_name: SLOT_ICONS[key]}));
+            data[side].forEach((key, index) => {
+                const row = new Adw.ActionRow({title: SLOT_LABELS[key]()});
+                row.add_prefix(new Gtk.Image({icon_name: 'list-drag-handle-symbolic', css_classes: ['dim-label']}));
+                row.add_prefix(new Gtk.Image({icon_name: SLOT_ICONS[key]}));
 
-            const up = new Gtk.Button({
-                icon_name: 'go-up-symbolic', valign: Gtk.Align.CENTER,
-                css_classes: ['flat'], sensitive: index > 0, tooltip_text: _('Move up'),
-            });
-            up.connect('clicked', () => move(key, index - 1));
-            const down = new Gtk.Button({
-                icon_name: 'go-down-symbolic', valign: Gtk.Align.CENTER,
-                css_classes: ['flat'], sensitive: index < order.length - 1, tooltip_text: _('Move down'),
-            });
-            down.connect('clicked', () => move(key, index + 1));
-            row.add_suffix(up);
-            row.add_suffix(down);
+                const up = new Gtk.Button({
+                    icon_name: 'go-up-symbolic', valign: Gtk.Align.CENTER,
+                    css_classes: ['flat'], sensitive: index > 0, tooltip_text: _('Move up'),
+                });
+                up.connect('clicked', () => move(key, side, index - 1));
+                const down = new Gtk.Button({
+                    icon_name: 'go-down-symbolic', valign: Gtk.Align.CENTER,
+                    css_classes: ['flat'], sensitive: index < data[side].length - 1, tooltip_text: _('Move down'),
+                });
+                down.connect('clicked', () => move(key, side, index + 2));
+                const swap = new Gtk.Button({
+                    icon_name: side === 'items-left' ? 'go-next-symbolic' : 'go-previous-symbolic',
+                    valign: Gtk.Align.CENTER, css_classes: ['flat'],
+                    tooltip_text: side === 'items-left' ? _('Move to the right side') : _('Move to the left side'),
+                });
+                swap.connect('clicked', () => move(key, other, -1));
+                row.add_suffix(up);
+                row.add_suffix(down);
+                row.add_suffix(swap);
 
-            const drag = new Gtk.DragSource({actions: Gdk.DragAction.MOVE});
-            drag.connect('prepare', () => {
-                const value = new GObject.Value();
-                value.init(GObject.TYPE_STRING);
-                value.set_string(key);
-                return Gdk.ContentProvider.new_for_value(value);
+                const drag = new Gtk.DragSource({actions: Gdk.DragAction.MOVE});
+                drag.connect('prepare', () => {
+                    const value = new GObject.Value();
+                    value.init(GObject.TYPE_STRING);
+                    value.set_string(key);
+                    return Gdk.ContentProvider.new_for_value(value);
+                });
+                drag.connect('drag-begin', (_src, dragObj) => {
+                    const paintable = new Gtk.WidgetPaintable({widget: row});
+                    Gtk.DragIcon.get_for_drag(dragObj).set_child(new Gtk.Picture({
+                        paintable, width_request: row.get_width(), height_request: row.get_height(),
+                        css_classes: ['card'],
+                    }));
+                });
+                row.add_controller(drag);
+
+                const drop = new Gtk.DropTarget({actions: Gdk.DragAction.MOVE});
+                drop.set_gtypes([GObject.TYPE_STRING]);
+                drop.connect('drop', (_t, value) => {
+                    move(String(value), side, index);
+                    return true;
+                });
+                row.add_controller(drop);
+                list.append(row);
             });
-            drag.connect('drag-begin', (_src, dragObj) => {
-                const paintable = new Gtk.WidgetPaintable({widget: row});
-                Gtk.DragIcon.get_for_drag(dragObj).set_child(new Gtk.Picture({
-                    paintable, width_request: row.get_width(), height_request: row.get_height(),
-                    css_classes: ['card'],
+
+            if (data[side].length === 0) {
+                list.append(new Adw.ActionRow({
+                    title: _('Drop items here'), css_classes: ['dim-label'], activatable: false,
                 }));
-            });
-            row.add_controller(drag);
-
-            const drop = new Gtk.DropTarget({actions: Gdk.DragAction.MOVE});
-            drop.set_gtypes([GObject.TYPE_STRING]);
-            drop.connect('drop', (_t, value) => {
-                move(String(value), index);
-                return true;
-            });
-            row.add_controller(drop);
-
-            list.append(row);
-        });
+            }
+        }
     };
 
-    rebuild();
-    settings.connect('changed::item-order', () => {
-        // Rebuild after the drop handler has returned.
-        GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
-            rebuild();
-            return GLib.SOURCE_REMOVE;
+    for (const side of SIDES) {
+        const group = new Adw.PreferencesGroup({
+            title: side === 'items-left' ? _('Left of the clock') : _('Right of the clock'),
+            description: side === 'items-left'
+                ? _('The clock always stays in the middle; both sides get the same width.')
+                : '',
         });
-    });
+        const list = new Gtk.ListBox({selection_mode: Gtk.SelectionMode.NONE, css_classes: ['boxed-list']});
+        // Dropping on the list itself (e.g. an empty side) appends.
+        const drop = new Gtk.DropTarget({actions: Gdk.DragAction.MOVE});
+        drop.set_gtypes([GObject.TYPE_STRING]);
+        drop.connect('drop', (_t, value) => {
+            move(String(value), side, -1);
+            return true;
+        });
+        list.add_controller(drop);
+        lists.set(side, list);
+        group.add(list);
+        groups.push(group);
+    }
 
-    const reset = new Gtk.Button({
-        label: _('Reset order'), halign: Gtk.Align.END, margin_top: 12, css_classes: ['flat'],
+    const reset = new Gtk.Button({label: _('Reset'), valign: Gtk.Align.CENTER, css_classes: ['flat']});
+    reset.connect('clicked', () => {
+        settings.reset('items-left');
+        settings.reset('items-right');
     });
-    reset.connect('clicked', () => settings.reset('item-order'));
-    group.set_header_suffix(reset);
-    return group;
+    groups[0].set_header_suffix(reset);
+
+    rebuild();
+    let pending = 0;
+    for (const side of SIDES) {
+        settings.connect(`changed::${side}`, () => {
+            // Both keys change together on a move; rebuild once, after the
+            // drop handler has returned.
+            if (pending)
+                return;
+            pending = GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
+                pending = 0;
+                rebuild();
+                return GLib.SOURCE_REMOVE;
+            });
+        });
+    }
+    return groups;
 }
 
 export default class IslandPreferences extends ExtensionPreferences {
@@ -221,8 +282,8 @@ export default class IslandPreferences extends ExtensionPreferences {
             description: _('strftime format, e.g. %H:%M:%S or %a %e %b %H:%M'),
         });
         behaviour.add(clock);
-        clock.add(entryRow(settings, 'clock-format', _('Collapsed clock format')));
-        clock.add(entryRow(settings, 'expanded-clock-format', _('Expanded clock format')));
+        clock.add(entryRow(settings, 'clock-format', _('Time format')));
+        clock.add(entryRow(settings, 'date-format', _('Date in the expanded island')));
 
         const expand = new Adw.PreferencesGroup({title: _('Expanding')});
         behaviour.add(expand);
@@ -272,6 +333,7 @@ export default class IslandPreferences extends ExtensionPreferences {
         // --- Layout --------------------------------------------------------
         const layout = new Adw.PreferencesPage({title: _('Layout'), icon_name: 'view-list-symbolic'});
         window.add(layout);
-        layout.add(orderGroup(settings));
+        for (const g of sidesGroups(settings))
+            layout.add(g);
     }
 }

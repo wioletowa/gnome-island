@@ -92,8 +92,11 @@ export const NotificationWatcher = GObject.registerClass({
             const queue: any[] | undefined = tray._notificationQueue;
             const later = () => {
                 const i = queue?.indexOf(n) ?? -1;
-                if (i >= 0)
+                if (i >= 0) {
                     queue!.splice(i, 1);
+                    // GNOME's unread dot subtracts queued banners; let it recount.
+                    tray.emit('queue-changed');
+                }
             };
             Promise.resolve().then(later);
         }

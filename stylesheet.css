@@ -19,8 +19,23 @@
   font-weight: bold;
 }
 
-.island-compact-clock {
+.island-clock {
+  spacing: 6px;
+}
+
+/* One time style everywhere so the digits stay put when the island expands. */
+.island-time {
   font-size: 1.05em;
+  font-weight: bold;
+}
+
+.island-date {
+  font-weight: bold;
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.island-messages-dot {
+  icon-size: 1.091em;
 }
 
 /* Our expanded row is named "panel" to inherit the stock indicator styling;
@@ -35,13 +50,18 @@
   spacing: 0;
 }
 
-#panel.island-expanded-row .island-odometer.clock {
-  padding: 0 0.6em;
+#panel.island-expanded-row .island-sym-left,
+#panel.island-expanded-row .island-sym-right {
+  spacing: 2px;
 }
 
 /* Views */
 .island-view {
   spacing: 10px;
+}
+
+.island-sym-left, .island-sym-right {
+  spacing: 8px;
 }
 
 .island-cover {
@@ -70,11 +90,18 @@
 .island-privacy-microphone { color: #ff9f0a; }
 
 .island-bubble-view {
-  padding: 0;
+  spacing: 6px;
 }
 
 .island-notification-view {
-  spacing: 8px;
+  spacing: 12px;
+}
+
+.island-notification-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 4px;
+  background-color: #30d158;
 }
 
 .island-notification-app {

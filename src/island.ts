@@ -23,7 +23,6 @@ interface ViewEntry {
     height: number | null;
 }
 
-const BUBBLE_SIZE_RATIO = 1.0;
 
 /**
  * The black capsule. Children (views) are allocated at their natural size
@@ -52,8 +51,11 @@ class IslandPill extends St.Widget {
                 continue;
             const [, natW] = actor.get_preferred_width(-1);
             const [, natH] = actor.get_preferred_height(natW);
-            const x = Math.round((w - natW) / 2);
-            const y = Math.round((h - natH) / 2);
+            // The pill width is always even and centred on an integer pixel,
+            // so floor(w/2) - floor(natW/2) keeps content fixed on screen
+            // while the capsule grows around it.
+            const x = Math.floor(w / 2) - Math.floor(natW / 2);
+            const y = Math.floor(h / 2) - Math.floor(natH / 2);
             child.set_origin(x, y);
             child.set_size(natW, natH);
             actor.allocate(child);
@@ -86,8 +88,11 @@ export const Island = GObject.registerClass({
     private _currentBubble: string | null = null;
     private _w!: Spring;
     private _h!: Spring;
-    private _bw!: Spring;
-    private _gap!: Spring;
+    /** Bubble diameter: grows from a dot into a circle. */
+    private _bs!: Spring;
+    /** Extra bubble width beyond the circle (e.g. for a timer). */
+    private _bx!: Spring;
+    private _bubbleWanted = false;
     private _blurEnabled = true;
     private _destroyed = false;
     private _relayoutId = 0;
@@ -108,8 +113,8 @@ export const Island = GObject.registerClass({
         this._driver = new SpringDriver(this, () => this._onFrame());
         this._w = this._driver.add(new Spring(metrics.compactHeight * 3, params));
         this._h = this._driver.add(new Spring(metrics.compactHeight, params));
-        this._bw = this._driver.add(new Spring(0, params));
-        this._gap = this._driver.add(new Spring(0, params));
+        this._bs = this._driver.add(new Spring(0, params));
+        this._bx = this._driver.add(new Spring(0, params));
 
         for (const p of [this.pill, this.bubble]) {
             const signal = p === this.pill ? 'pill-clicked' : 'bubble-clicked';
@@ -182,23 +187,29 @@ export const Island = GObject.registerClass({
         const width = box.get_width();
         const m = this._metrics;
 
-        const pw = Math.max(0, Math.round(this._w.value));
-        const ph = Math.max(0, Math.round(this._h.value));
-        const bw = Math.max(0, Math.round(this._bw.value));
-        const gap = Math.max(0, this._gap.value);
-        const total = pw + gap + bw;
-        const x0 = Math.round((width - total) / 2);
-        const y = m.topMargin;
+        // Even sizes around an integer centre: both edges move by the same
+        // whole pixel each frame, so nothing wobbles.
+        const even = (v: number) => Math.max(0, 2 * Math.round(v / 2));
+        const pw = even(this._w.value);
+        const ph = even(this._h.value);
+        const cx = Math.floor(width / 2);
+        const x0 = cx - pw / 2;
+        const y0 = m.topMargin;
 
         const child = new Clutter.ActorBox();
-        child.set_origin(x0, y);
+        child.set_origin(x0, y0);
         child.set_size(pw, ph);
         this.pill.allocate(child);
 
-        // The bubble is a circle that grows out of the right edge of the pill.
-        const bh = Math.min(ph, Math.round(m.compactHeight * BUBBLE_SIZE_RATIO));
-        child.set_origin(x0 + pw + gap, y + Math.round((ph - bh) / 2));
-        child.set_size(bw, bh);
+        // The bubble lives to the right of the pill and follows its edge. It
+        // grows from a dot at the centre of where the circle will be.
+        const bh = m.compactHeight;
+        const s = Math.max(0, Math.min(bh * 1.2, this._bs.value));
+        const extra = Math.max(0, this._bx.value);
+        const bx = x0 + pw + m.bubbleGap + (bh - s) / 2;
+        const by = y0 + (ph - s) / 2;
+        child.set_origin(Math.round(bx), Math.round(by));
+        child.set_size(Math.round(s + extra), Math.round(s));
         this.bubble.allocate(child);
     }
 
@@ -246,9 +257,10 @@ export const Island = GObject.registerClass({
     setBubbleView(name: string | null) {
         if (this._currentBubble === name)
             return;
-        this._currentBubble = name;
-        for (const [n, e] of this._bubbleViews)
-            e.presence.target = n === name ? 1 : 0;
+        // Switching content while shown just crossfades inside the bubble.
+        if (name)
+            this._currentBubble = name;
+        this._bubbleWanted = name !== null;
         if (name)
             this.bubble.visible = true;
         this.retarget();
@@ -280,16 +292,7 @@ export const Island = GObject.registerClass({
             this._h.target = h;
         }
 
-        const bubbleEntry = this._currentBubble ? this._bubbleViews.get(this._currentBubble) : null;
-        if (bubbleEntry) {
-            const [, natW] = bubbleEntry.actor.get_preferred_width(-1);
-            const bh = m.compactHeight * BUBBLE_SIZE_RATIO;
-            this._bw.target = Math.max(bh, natW + m.hPadding);
-            this._gap.target = m.bubbleGap;
-        } else {
-            this._bw.target = 0;
-            this._gap.target = 0;
-        }
+        this._stageBubble();
         this._driver.kick();
     }
 
@@ -303,22 +306,57 @@ export const Island = GObject.registerClass({
             return;
         }
         e.actor.opacity = Math.round(255 * p * p);
-        const s = 0.82 + 0.18 * Math.max(0, e.presence.value);
+        // Subtle zoom; at rest the scale is exactly 1 so text is pixel-aligned.
+        const s = p > 0.999 ? 1 : 0.9 + 0.1 * Math.max(0, e.presence.value);
         e.actor.set_scale(s, s);
         if (e.blur) {
-            const r = (1 - p) * 10;
-            e.blur.enabled = this._blurEnabled && r > 0.5;
-            e.blur.radius = r;
+            // Keep the effect on for the whole transition so it never pops
+            // in or out mid-animation; radius goes smoothly to 0.
+            e.blur.enabled = this._blurEnabled && p < 0.999;
+            e.blur.radius = (1 - p) * 8;
         }
+    }
+
+    /**
+     * Bubble choreography. Showing: dot -> circle -> (widen) -> icon fades
+     * in. Hiding runs the same steps backwards.
+     */
+    private _stageBubble() {
+        const bh = this._metrics.compactHeight;
+        const entry = this._currentBubble ? this._bubbleViews.get(this._currentBubble) : null;
+        let extra = 0;
+        if (entry) {
+            const [, natW] = entry.actor.get_preferred_width(-1);
+            extra = Math.max(0, natW + this._metrics.hPadding - bh);
+        }
+        if (this._bubbleWanted) {
+            this._bs.target = bh;
+            if (this._bs.value > bh * 0.85) {
+                this._bx.target = extra;
+                if (this._bx.value > extra - 2 && entry)
+                    entry.presence.target = 1;
+            }
+        } else {
+            if (entry)
+                entry.presence.target = 0;
+            if (!entry || entry.presence.value < 0.3)
+                this._bx.target = 0;
+            if (this._bx.value < 2)
+                this._bs.target = 0;
+        }
+        this._driver.kick();
     }
 
     private _onFrame() {
         for (const e of this._views.values())
             this._applyPresence(e);
+        this._stageBubble();
         for (const e of this._bubbleViews.values())
             this._applyPresence(e);
-        if (!this._currentBubble && this._bw.value < 0.5 && this._bw.target === 0)
+        if (!this._bubbleWanted && this._bs.value < 0.5 && this._bs.target === 0) {
             this.bubble.visible = false;
+            this._currentBubble = null;
+        }
         this.queue_relayout();
     }
 
@@ -327,8 +365,6 @@ export const Island = GObject.registerClass({
         this.retarget();
         this._w.snap();
         this._h.snap();
-        this._bw.snap();
-        this._gap.snap();
         for (const e of [...this._views.values(), ...this._bubbleViews.values()]) {
             e.presence.snap();
             this._applyPresence(e);

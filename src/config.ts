@@ -2,7 +2,7 @@ import Gio from 'gi://Gio';
 
 import type {IslandMetrics} from './island.js';
 import type {SpringParams} from './spring.js';
-import type {SlotName} from './bridge.js';
+import type {SideSlot} from './bridge.js';
 
 /** Typed read access to the extension's GSettings. */
 export class Config {
@@ -37,16 +37,20 @@ export class Config {
         return this.settings.get_string('clock-format');
     }
 
-    get expandedClockFormat() {
-        return this.settings.get_string('expanded-clock-format');
+    get dateFormat() {
+        return this.settings.get_string('date-format');
     }
 
     get collapseDelay() {
         return this.settings.get_int('collapse-delay');
     }
 
-    get itemOrder(): SlotName[] {
-        return this.settings.get_strv('item-order') as SlotName[];
+    get itemsLeft(): SideSlot[] {
+        return this.settings.get_strv('items-left') as SideSlot[];
+    }
+
+    get itemsRight(): SideSlot[] {
+        return this.settings.get_strv('items-right') as SideSlot[];
     }
 
     get blurTransitions() {

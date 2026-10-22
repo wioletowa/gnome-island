@@ -8,22 +8,25 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import {Config} from './config.js';
 import {Island, IslandType} from './island.js';
 import {ExpandedRow, ExpandedRowType, PanelBridge} from './bridge.js';
-import {Odometer, OdometerType, SecondTicker} from './odometer.js';
+import {SecondTicker} from './odometer.js';
 import {MediaWatcher, MediaWatcherType} from './media.js';
 import {SpectrumAnalyzer} from './visualizer.js';
 import {PrivacyMonitor, PrivacyMonitorType} from './privacy.js';
 import {IslandNotification, NotificationWatcher, NotificationWatcherType} from './notifications.js';
 import {
-    BubbleView, BubbleViewType, MediaView, MediaViewType, NotificationView,
-    NotificationViewType, RecordingView, RecordingViewType,
+    BubbleView, BubbleViewType, ClockWidget, ClockWidgetType, CoverArt, CoverArtType,
+    MediaView, MediaViewType, MessagesDotMirror, NotificationView, NotificationViewType,
 } from './views.js';
+import {VisualizerBars, VisualizerBarsType} from './visualizer.js';
 
 interface IslandHost {
     island: IslandType;
     row: ExpandedRowType;
-    clock: OdometerType;
+    /** Media cover and visualizer at the outer ends of the expanded row. */
+    rowCover: CoverArtType;
+    rowBars: VisualizerBarsType;
+    clock: ClockWidgetType;
     media: MediaViewType;
-    recording: RecordingViewType;
     notification: NotificationViewType;
     bubble: BubbleViewType;
     /** Own chrome container for non-primary monitors; null on primary. */
@@ -44,7 +47,7 @@ export default class IslandExtension extends Extension {
     private _notifications: NotificationWatcherType | null = null;
     private _hosts: IslandHost[] = [];
     private _expanded: IslandHost | null = null;
-    private _expandedClock: OdometerType | null = null;
+    private _expandedClock: ClockWidgetType | null = null;
     private _collapseId = 0;
     private _tickCb: ((now: GLib.DateTime) => void) | null = null;
     private _levelsCb: ((levels: number[]) => void) | null = null;
@@ -63,13 +66,17 @@ export default class IslandExtension extends Extension {
 
         Main.panel.hide();
 
-        this._expandedClock = new Odometer({style_class: 'island-odometer clock'});
+        this._expandedClock = new ClockWidget();
+        // GNOME's hover/checked highlight targets `.clock` inside the button.
+        this._expandedClock.add_style_class_name('clock');
 
         this._analyzer = new SpectrumAnalyzer();
         this._analyzer.configure(this._config.visualizerBars, this._config.visualizerSensitivity);
         this._levelsCb = levels => {
-            for (const host of this._hosts)
+            for (const host of this._hosts) {
                 host.media.bars.setLevels(levels);
+                host.rowBars.setLevels(levels);
+            }
         };
         this._analyzer.addListener(this._levelsCb);
 
@@ -151,7 +158,7 @@ export default class IslandExtension extends Extension {
         this._bridge?.destroy();
         this._destroyHosts();
         this._bridge = new PanelBridge();
-        this._bridge.setClockActor(this._expandedClock);
+        this._bridge.setClock(this._expandedClock);
 
         const layout = Main.layoutManager;
         const monitors = config.allMonitors ? layout.monitors : [layout.primaryMonitor];
@@ -197,21 +204,24 @@ export default class IslandExtension extends Extension {
         const island = new Island(config.metrics, config.spring);
         island.setBlurEnabled(config.blurTransitions);
 
-        const clock = new Odometer({style_class: 'island-odometer island-compact-clock'});
+        const dot = this._bridge!.messagesDot;
+        const clock = new ClockWidget();
+        clock.setIndicator(new MessagesDotMirror(dot));
         island.addView('clock', clock);
 
         const media = new MediaView(config.visualizerBars);
+        media.clock.setIndicator(new MessagesDotMirror(dot));
         media.bars.visible = config.visualizerEnabled;
         island.addView('media', media);
-
-        const recording = new RecordingView();
-        island.addView('recording', recording);
 
         const notification = new NotificationView();
         island.addView('notification', notification);
 
         const row = new ExpandedRow();
-        row.setOrder(config.itemOrder);
+        const rowCover = new CoverArt();
+        const rowBars = new VisualizerBars(config.visualizerBars);
+        row.setEnds(rowCover, rowBars);
+        row.setLayout(config.itemsLeft, config.itemsRight);
         row.set_style(`height: ${config.metrics.expandedHeight}px;`);
         island.addView('expanded', row);
 
@@ -219,7 +229,7 @@ export default class IslandExtension extends Extension {
         island.addView('privacy', bubble, {bubble: true});
 
         const host: IslandHost = {
-            island, row, clock, media, recording, notification, bubble,
+            island, row, rowCover, rowBars, clock, media, notification, bubble,
             container: null, monitorIndex,
         };
         this._applyColors(host);
@@ -253,6 +263,8 @@ export default class IslandExtension extends Extension {
         host.island.pill.set_style(style);
         host.island.bubble.set_style(style);
         host.media.bars.setColor(accent);
+        host.rowBars.setColor(accent);
+        host.notification.setAccent(accent);
     }
 
     // --- State → views -----------------------------------------------------
@@ -293,12 +305,16 @@ export default class IslandExtension extends Extension {
 
         for (const host of this._hosts) {
             host.media.cover.setUri(state?.coverUri ?? null);
-            host.recording.update(kind, since);
-            host.bubble.update(kind);
+            host.rowCover.setUri(state?.coverUri ?? null);
+            const showEnds = mediaVisible;
+            host.rowCover.visible = showEnds;
+            host.rowBars.visible = showEnds && this._config.visualizerEnabled;
+            host.bubble.update(kind, since);
+            // The privacy bubble always lives beside the island, never inside it.
+            host.island.setBubbleView(kind ? 'privacy' : null);
 
             if (host === this._expanded) {
                 host.island.setView('expanded');
-                host.island.setBubbleView(null);
                 continue;
             }
             let view = 'clock';
@@ -306,14 +322,11 @@ export default class IslandExtension extends Extension {
                 view = 'notification';
             else if (mediaVisible)
                 view = 'media';
-            else if (kind)
-                view = 'recording';
             host.island.setView(view);
-            host.island.setBubbleView(
-                !this._notifActive && mediaVisible && kind ? 'privacy' : null);
         }
 
-        const anyMedia = this._hosts.some(h => h.island.currentView === 'media');
+        const anyMedia = this._hosts.some(h =>
+            h.island.currentView === 'media' || (h.island.currentView === 'expanded' && mediaVisible));
         if (this._config.visualizerEnabled && state?.playing && anyMedia)
             this._analyzer?.start();
         else
@@ -324,15 +337,16 @@ export default class IslandExtension extends Extension {
 
     private _onTick(now: GLib.DateTime) {
         const config = this._config!;
-        const compact = now.format(config.clockFormat) ?? '';
+        const time = now.format(config.clockFormat) ?? '';
         for (const host of this._hosts) {
-            host.clock.setText(compact);
-            host.media.clock.setText(compact);
-            host.recording.clock.setText(compact);
+            host.clock.time.setText(time);
+            host.media.clock.time.setText(time);
             if (this._privacy)
-                host.recording.update(this._privacy.kind, this._privacy.since);
+                host.bubble.update(this._privacy.kind, this._privacy.since);
         }
-        this._expandedClock?.setText(now.format(config.expandedClockFormat) ?? '');
+        this._expandedClock?.time.setText(time);
+        const date = config.dateFormat ? now.format(config.dateFormat) : null;
+        this._expandedClock?.setDate(date || null);
     }
 
     // --- Notifications -----------------------------------------------------
@@ -372,6 +386,8 @@ export default class IslandExtension extends Extension {
         if (!this._notifActive)
             return;
         this._notifActive = false;
+        for (const host of this._hosts)
+            host.notification.stop();
         this._updateViews();
         // Leave a beat between consecutive notifications.
         if (this._notifQueue.length) {
@@ -414,7 +430,6 @@ export default class IslandExtension extends Extension {
         if (previous && previous !== host)
             this._updateViews();
         host.island.setView('expanded');
-        host.island.setBubbleView(null);
         this._updateViews();
         host.island.pill.grab_key_focus();
         this._cancelCollapse();
@@ -472,18 +487,17 @@ export default class IslandExtension extends Extension {
     private _onKeyFocusOut(host: IslandHost) {
         if (this._expanded !== host)
             return;
-        // Focus moving into a menu or one of our indicators is fine; focus
-        // going to a window means the user clicked elsewhere.
+        // With focus-follows-mouse a window takes focus as soon as the
+        // pointer reaches it, so losing focus only starts the normal
+        // collapse delay. Clicks outside collapse immediately (see below).
         GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
             if (this._expanded !== host)
                 return GLib.SOURCE_REMOVE;
             const focus = global.stage.key_focus;
-            if ((Main.panel.menuManager as any).activeMenu)
-                return GLib.SOURCE_REMOVE;
             if (focus && host.island.contains(focus))
                 return GLib.SOURCE_REMOVE;
-            if (global.display.focus_window)
-                this._collapse();
+            if (!host.island.hovered)
+                this._scheduleCollapse();
             return GLib.SOURCE_REMOVE;
         });
     }
@@ -546,9 +560,10 @@ export default class IslandExtension extends Extension {
         case 'all-monitors':
             this._buildHosts();
             break;
-        case 'item-order':
+        case 'items-left':
+        case 'items-right':
             for (const host of this._hosts)
-                host.row.setOrder(config.itemOrder);
+                host.row.setLayout(config.itemsLeft, config.itemsRight);
             break;
         case 'spring-stiffness':
         case 'spring-damping':
@@ -567,7 +582,7 @@ export default class IslandExtension extends Extension {
                 this._applyColors(host);
             break;
         case 'clock-format':
-        case 'expanded-clock-format':
+        case 'date-format':
             this._onTick(GLib.DateTime.new_now_local());
             break;
         case 'visualizer-enabled':
@@ -578,8 +593,10 @@ export default class IslandExtension extends Extension {
         case 'visualizer-bars':
         case 'visualizer-sensitivity':
             this._analyzer?.configure(config.visualizerBars, config.visualizerSensitivity);
-            for (const host of this._hosts)
+            for (const host of this._hosts) {
                 host.media.bars.setCount(config.visualizerBars);
+                host.rowBars.setCount(config.visualizerBars);
+            }
             break;
         case 'notifications-in-island':
             this._notifications!.blockBanners = config.notificationsInIsland;

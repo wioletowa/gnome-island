@@ -96,13 +96,16 @@ export class SpringDriver {
     private _tick() {
         // Clamp so a stalled frame (e.g. after a VT switch) does not explode.
         const dt = Math.min(this._timeline.get_delta() / 1000, 1 / 20);
+        for (const s of this._springs)
+            s.step(dt);
+        // onFrame may retarget springs (staged animations), so decide about
+        // stopping only afterwards.
+        this._onFrame();
         let settled = true;
         for (const s of this._springs) {
-            s.step(dt);
             if (!s.settled)
                 settled = false;
         }
-        this._onFrame();
         if (settled)
             this._timeline.stop();
     }

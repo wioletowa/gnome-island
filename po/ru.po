@@ -195,3 +195,30 @@ msgstr "Размытие при переходах"
 
 msgid "Layout"
 msgstr "Расположение"
+
+msgid "Time format"
+msgstr "Формат времени"
+
+msgid "Date in the expanded island"
+msgstr "Дата в раскрытом островке"
+
+msgid "Move to the right side"
+msgstr "Перенести вправо"
+
+msgid "Move to the left side"
+msgstr "Перенести влево"
+
+msgid "Drop items here"
+msgstr "Перетащите элементы сюда"
+
+msgid "Left of the clock"
+msgstr "Слева от часов"
+
+msgid "Right of the clock"
+msgstr "Справа от часов"
+
+msgid "The clock always stays in the middle; both sides get the same width."
+msgstr "Часы всегда остаются по центру, обе стороны одинаковой ширины."
+
+msgid "Reset"
+msgstr "Сбросить"

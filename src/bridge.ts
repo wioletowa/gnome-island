@@ -5,9 +5,14 @@ import St from 'gi://St';
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
+import {SymmetricBox} from './symmetric.js';
+import type {ClockWidgetType} from './views.js';
+
 export type SlotName = 'workspaces' | 'clock' | 'keyboard' | 'tray' | 'quick-settings';
 
-export const ALL_SLOTS: SlotName[] = ['workspaces', 'clock', 'keyboard', 'tray', 'quick-settings'];
+/** Slots that can go on either side; the clock is always in the middle. */
+export type SideSlot = Exclude<SlotName, 'clock'>;
+export const SIDE_SLOTS: SideSlot[] = ['workspaces', 'keyboard', 'tray', 'quick-settings'];
 
 const ROLE_SLOTS: Record<string, SlotName> = {
     activities: 'workspaces',
@@ -22,40 +27,66 @@ interface Origin {
 }
 
 /**
- * The row of panel indicators shown inside the expanded island. It is named
+ * The row of panel indicators shown inside the expanded island: the clock
+ * slot sits exactly in the middle with equally wide sides. It is named
  * "panel" so the stock `#panel .panel-button` theme rules keep applying to
- * the indicators we move into it.
+ * the indicators we move into it. Optional `leading`/`trailing` actors sit
+ * at the outer ends (media cover and visualizer).
  */
 export const ExpandedRow = GObject.registerClass(
-class ExpandedRow extends St.BoxLayout {
+class ExpandedRow extends SymmetricBox {
     slots!: Map<SlotName, St.BoxLayout>;
+    private _leading: Clutter.Actor | null = null;
+    private _trailing: Clutter.Actor | null = null;
 
     constructor() {
-        super({
-            name: 'panel',
-            style_class: 'island-expanded-row',
-            y_align: Clutter.ActorAlign.CENTER,
-        });
+        super({name: 'panel', style_class: 'island-expanded-row'});
         this.slots = new Map();
-        for (const name of ALL_SLOTS) {
+        for (const name of [...SIDE_SLOTS, 'clock' as SlotName]) {
             const box = new St.BoxLayout({
                 style_class: `island-slot island-slot-${name}`,
                 y_align: Clutter.ActorAlign.CENTER,
             });
             this.slots.set(name, box);
-            this.add_child(box);
         }
+        this.center = this.slots.get('clock')!;
+        this.setLayout(['workspaces'], ['keyboard', 'tray', 'quick-settings']);
     }
 
-    setOrder(order: SlotName[]) {
-        const seen = new Set<SlotName>();
-        let i = 0;
-        for (const name of [...order, ...ALL_SLOTS]) {
-            if (seen.has(name) || !this.slots.has(name))
-                continue;
-            seen.add(name);
-            this.set_child_at_index(this.slots.get(name)!, i++);
+    setLayout(left: SideSlot[], right: SideSlot[]) {
+        const seen = new Set<SideSlot>();
+        const clean = (list: SideSlot[]) => list.filter(n => {
+            if (seen.has(n) || !SIDE_SLOTS.includes(n))
+                return false;
+            seen.add(n);
+            return true;
+        });
+        const l = clean(left);
+        const r = clean(right);
+        // Anything missing from both lists goes to the right.
+        for (const n of SIDE_SLOTS) {
+            if (!seen.has(n))
+                r.push(n);
         }
+        for (const box of this.slots.values()) {
+            if (box !== this.center)
+                box.get_parent()?.remove_child(box);
+        }
+        for (const n of l)
+            this.left.add_child(this.slots.get(n)!);
+        for (const n of r)
+            this.right.add_child(this.slots.get(n)!);
+        if (this._leading)
+            this.left.set_child_below_sibling(this._leading, null);
+        if (this._trailing)
+            this.right.set_child_above_sibling(this._trailing, null);
+    }
+
+    setEnds(leading: Clutter.Actor, trailing: Clutter.Actor) {
+        this._leading = leading;
+        this._trailing = trailing;
+        this.left.insert_child_at_index(leading, 0);
+        this.right.add_child(trailing);
     }
 });
 
@@ -73,7 +104,8 @@ export class PanelBridge {
     private _boxes: St.BoxLayout[];
     private _signals: [GObject.Object, number][] = [];
     private _idleId = 0;
-    private _clockReplacement: Clutter.Actor | null = null;
+    private _clock: ClockWidgetType | null = null;
+    private _pad: Clutter.Actor | null = null;
 
     constructor() {
         const panel = Main.panel as any;
@@ -103,23 +135,51 @@ export class PanelBridge {
         }
     }
 
-    /** Replaces the date menu's label with our own clock actor. */
-    setClockActor(actor: Clutter.Actor | null) {
+    /**
+     * Puts our clock into the date menu button in place of GNOME's label.
+     * GNOME's own unread-messages dot moves into the clock's right side so
+     * it keeps working exactly as before.
+     */
+    setClock(clock: ClockWidgetType | null) {
         const dateMenu = (Main.panel.statusArea as any).dateMenu;
         if (!dateMenu)
             return;
-        const label: Clutter.Actor = dateMenu._clockDisplay;
-        if (this._clockReplacement) {
-            this._clockReplacement.get_parent()?.remove_child(this._clockReplacement);
-            this._clockReplacement = null;
+        const label: St.Label = dateMenu._clockDisplay;
+        const dot: St.Icon = dateMenu._indicator;
+        const box = label.get_parent() as St.BoxLayout;
+
+        if (this._clock) {
+            this._clock.setIndicator(null);
+            box.remove_child(this._clock);
+            this._clock = null;
         }
-        if (actor) {
-            label.get_parent()!.insert_child_above(actor, label);
+        if (clock) {
+            // indicatorPad (first child) has its visibility bound to the dot,
+            // so take it out of the box rather than hiding it.
+            if (!this._pad) {
+                this._pad = box.get_first_child();
+                if (this._pad)
+                    box.remove_child(this._pad);
+            }
+            box.remove_child(dot);
+            clock.setIndicator(dot);
+            box.add_child(clock);
             label.hide();
-            this._clockReplacement = actor;
+            this._clock = clock;
         } else {
+            if (dot.get_parent())
+                dot.get_parent()!.remove_child(dot);
+            box.add_child(dot);
+            if (this._pad)
+                box.insert_child_at_index(this._pad, 0);
+            this._pad = null;
             label.show();
         }
+    }
+
+    /** GNOME's unread-messages dot, for mirroring in the collapsed island. */
+    get messagesDot(): St.Icon | null {
+        return (Main.panel.statusArea as any).dateMenu?._indicator ?? null;
     }
 
     private _queueSync() {
@@ -166,7 +226,7 @@ export class PanelBridge {
         for (const [obj, id] of this._signals)
             obj.disconnect(id);
         this._signals = [];
-        this.setClockActor(null);
+        this.setClock(null);
 
         // Put indicators back in their original boxes, in original order.
         const entries = [...this._origins.entries()]
