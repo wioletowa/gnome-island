@@ -1,8 +1,9 @@
 import Clutter from 'gi://Clutter';
+import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import St from 'gi://St';
 
-import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
+import {Extension, gettext as _} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as WorkspaceSwitcherPopup from 'resource:///org/gnome/shell/ui/workspaceSwitcherPopup.js';
 
@@ -12,6 +13,7 @@ import {ExpandedRow, PanelBridge} from './bridge.js';
 import {SecondTicker} from './odometer.js';
 import {MediaWatcher} from './media.js';
 import {PrivacyMonitor} from './privacy.js';
+import {captureUsers} from './pipewire.js';
 import {NotificationWatcher} from './notifications.js';
 import {
     BubbleView, ClockWidget, CoverArt, MediaView, MessagesDotMirror,
@@ -23,6 +25,9 @@ import {SpectrumAnalyzer, VisualizerBars} from './visualizer.js';
 const OSD_TIMEOUT = 1500;
 /** How long the workspace dots replace the collapsed island. */
 const WORKSPACE_TIMEOUT = 1000;
+
+/** Hover delay before the privacy tooltip appears. */
+const TOOLTIP_DELAY = 250;
 
 /** Notifications that waited longer than this (while expanded) are dropped. */
 const NOTIFICATION_MAX_WAIT_US = 10_000_000;
@@ -50,6 +55,10 @@ export default class IslandExtension extends Extension {
     _notifActive = false;
     _notifTimeoutId = 0;
     _wsActive = false;
+    _tooltip = null;
+    _tooltipId = 0;
+    _tooltipKind = null;
+    _tooltipCancel = null;
     _wsTimeoutId = 0;
     _origShowOsd = null;
     _origWsDisplay = null;
@@ -120,6 +129,9 @@ export default class IslandExtension extends Extension {
         this._notifActive = false;
         this._pausedSince = 0;
 
+        this._hideTooltip();
+        this._tooltip?.destroy();
+        this._tooltip = null;
         this._unpatchPanel();
         Main.layoutManager.disconnectObject(this);
         global.stage.disconnectObject(this);
@@ -209,11 +221,9 @@ export default class IslandExtension extends Extension {
 
         const dot = this._bridge.messagesDot;
         const clock = new ClockWidget();
-        clock.setIndicator(new MessagesDotMirror(dot));
         island.addView('clock', clock);
 
         const media = new MediaView(config.visualizerBars);
-        media.clock.setIndicator(new MessagesDotMirror(dot));
         media.bars.visible = config.visualizerEnabled;
         island.addView('media', media);
 
@@ -229,10 +239,20 @@ export default class IslandExtension extends Extension {
         island.addView('expanded', row);
 
         const workspaces = new WorkspaceDots();
-        island.addView('workspaces', workspaces);
+        island.addView('workspaces', workspaces, {keepSize: true});
+
+        // GNOME's unread dot, mirrored into the right padding of the
+        // collapsed island so it never changes its size.
+        island.setEdgeActor(new MessagesDotMirror(dot), ['clock', 'media']);
 
         const bubble = new BubbleView();
         island.addView('privacy', bubble, {bubble: 'right'});
+        bubble.connect('icon-hover', (_b, kind, hovered) => {
+            if (hovered)
+                this._showTooltip(host, kind);
+            else
+                this._hideTooltip();
+        });
 
         const osd = new OsdView();
         island.addView('osd', osd, {bubble: 'left'});
@@ -535,6 +555,85 @@ export default class IslandExtension extends Extension {
             return Clutter.EVENT_PROPAGATE;
         this._collapse();
         return Clutter.EVENT_PROPAGATE;
+    }
+
+    // --- Privacy tooltip ---------------------------------------------------
+
+    _privacyTitle(kind) {
+        switch (kind) {
+        case 'screencast':
+        case 'remote-recording':
+            return _('Screen recording');
+        case 'sharing':
+            return _('Screen sharing');
+        case 'camera':
+            return _('Camera');
+        default:
+            return this._privacy?.microphoneMuted ? _('Microphone (muted)') : _('Microphone');
+        }
+    }
+
+    _showTooltip(host, kind) {
+        this._hideTooltip();
+        this._tooltipKind = kind;
+        this._tooltipId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, TOOLTIP_DELAY, () => {
+            this._tooltipId = 0;
+            const icon = host.bubble.iconFor(kind);
+            if (!icon || this._tooltipKind !== kind)
+                return GLib.SOURCE_REMOVE;
+            if (!this._tooltip) {
+                this._tooltip = new St.Label({style_class: 'island-tooltip', opacity: 0});
+                // Plain uiGroup child: drawn above windows, never takes input.
+                Main.layoutManager.uiGroup.add_child(this._tooltip);
+            }
+            const title = this._privacyTitle(kind);
+            this._setTooltipText(icon, title);
+            this._tooltip.show();
+            this._tooltip.remove_all_transitions();
+            this._tooltip.ease({opacity: 255, duration: 150, mode: Clutter.AnimationMode.EASE_OUT_QUAD});
+
+            // Who is using it comes from PipeWire; fill it in when known.
+            this._tooltipCancel = new Gio.Cancellable();
+            captureUsers(this._tooltipCancel).then(users => {
+                if (this._tooltipKind !== kind || !this._tooltip)
+                    return;
+                const apps = kind === 'microphone' ? users.microphone
+                    : kind === 'camera' ? users.camera
+                        : kind === 'screencast' ? [] : users.screen;
+                if (apps.length)
+                    this._setTooltipText(icon, `${title}: ${apps.join(', ')}`);
+            }).catch(e => logError(e, 'gnome-island: tooltip'));
+            return GLib.SOURCE_REMOVE;
+        });
+    }
+
+    _setTooltipText(icon, text) {
+        const tip = this._tooltip;
+        tip.text = text;
+        const [x, y] = icon.get_transformed_position();
+        const [, tipW] = tip.get_preferred_width(-1);
+        const monitor = Main.layoutManager.findMonitorForActor(icon) ?? Main.layoutManager.primaryMonitor;
+        const bottom = this._config.metrics.topMargin + this._config.metrics.expandedHeight + 8;
+        let tx = Math.round(x + icon.width / 2 - tipW / 2);
+        tx = Math.max(monitor.x + 8, Math.min(tx, monitor.x + monitor.width - tipW - 8));
+        tip.set_position(tx, Math.max(Math.round(y + icon.height + 12), monitor.y + bottom));
+    }
+
+    _hideTooltip() {
+        this._tooltipKind = null;
+        if (this._tooltipId)
+            GLib.source_remove(this._tooltipId);
+        this._tooltipId = 0;
+        this._tooltipCancel?.cancel();
+        this._tooltipCancel = null;
+        const tip = this._tooltip;
+        if (tip?.visible) {
+            tip.remove_all_transitions();
+            tip.ease({
+                opacity: 0, duration: 120, mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+                onComplete: () => tip.hide(),
+            });
+        }
     }
 
     // --- OSD (volume, brightness, microphone…) ------------------------------

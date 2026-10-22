@@ -36,13 +36,10 @@ class ExpandedRow extends SymmetricBox {
 
     constructor() {
         // Side items stack against the outer corners, the clock stays centred.
-        super({name: 'panel', style_class: 'island-expanded-row', hugEdges: true});
+        super({name: 'panel', style_class: 'island-expanded-row', hugEdges: true, fillHeight: true});
         this.slots = new Map();
         for (const name of [...SIDE_SLOTS, 'clock']) {
-            const box = new St.BoxLayout({
-                style_class: `island-slot island-slot-${name}`,
-                y_align: Clutter.ActorAlign.CENTER,
-            });
+            const box = new St.BoxLayout({style_class: `island-slot island-slot-${name}`});
             this.slots.set(name, box);
         }
         this.center = this.slots.get('clock');

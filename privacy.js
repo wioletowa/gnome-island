@@ -17,6 +17,9 @@ export const PRIVACY_ICONS = {
     microphone: 'audio-input-microphone-symbolic',
 };
 
+/** How long the microphone must stay unused before its icon goes away. */
+const MIC_OFF_DELAY = 1500;
+
 const SKIPPED_AUDIO_APPS = [
     'org.gnome.VolumeControl',
     'org.PulseAudio.pavucontrol',
@@ -34,6 +37,7 @@ export const PrivacyMonitor = GObject.registerClass({
     _active = new Map();
     _handles = new Set();
     _micMuted = false;
+    _micOffId = 0;
 
     constructor() {
         super();
@@ -116,6 +120,23 @@ export const PrivacyMonitor = GObject.registerClass({
         } catch {}
         const mutedChanged = muted !== this._micMuted;
         this._micMuted = muted;
+
+        // Muting can briefly suspend the source; don't drop the indicator
+        // for that blip, only when the app has really stopped.
+        if (this._micOffId) {
+            GLib.source_remove(this._micOffId);
+            this._micOffId = 0;
+        }
+        if (!active && this._active.has('microphone') && notify) {
+            this._micOffId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, MIC_OFF_DELAY, () => {
+                this._micOffId = 0;
+                this._set('microphone', false);
+                return GLib.SOURCE_REMOVE;
+            });
+            if (mutedChanged)
+                this.emit('changed');
+            return;
+        }
         this._set('microphone', active, notify);
         if (mutedChanged && active && notify)
             this.emit('changed');
@@ -161,6 +182,9 @@ export const PrivacyMonitor = GObject.registerClass({
     }
 
     destroy() {
+        if (this._micOffId)
+            GLib.source_remove(this._micOffId);
+        this._micOffId = 0;
         Main.screenshotUI.disconnectObject(this);
         global.backend.get_remote_access_controller?.()?.disconnectObject(this);
         for (const h of this._handles)

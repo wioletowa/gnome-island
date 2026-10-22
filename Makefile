@@ -1,6 +1,6 @@
 UUID := gnome-island@whyoolw
 SOURCES := bridge.js config.js island.js media.js notifications.js odometer.js \
-	privacy.js spring.js symmetric.js views.js visualizer.js
+	pipewire.js privacy.js spring.js symmetric.js views.js visualizer.js
 ZIP := dist/$(UUID).shell-extension.zip
 DATA_HOME := $(or $(XDG_DATA_HOME),$(HOME)/.local/share)
 DEST := $(DATA_HOME)/gnome-shell/extensions/$(UUID)

@@ -1,6 +1,5 @@
 import Clutter from 'gi://Clutter';
 import Gio from 'gi://Gio';
-import GLib from 'gi://GLib';
 import GObject from 'gi://GObject';
 import Pango from 'gi://Pango';
 import St from 'gi://St';
@@ -112,32 +111,25 @@ class MediaView extends SymmetricBox {
     }
 });
 
-export function formatElapsed(us) {
-    const total = Math.max(0, Math.floor(us / 1_000_000));
-    const h = Math.floor(total / 3600);
-    const m = Math.floor((total % 3600) / 60);
-    const s = total % 60;
-    const mm = h > 0 ? String(m).padStart(2, '0') : String(m);
-    return `${h > 0 ? `${h}:` : ''}${mm}:${String(s).padStart(2, '0')}`;
-}
-
-/** Kinds that show an elapsed timer. */
-const TIMED_KINDS = ['screencast', 'remote-recording', 'sharing'];
-
 /**
  * Every active privacy activity in the side bubble: one icon per kind
- * (recording, sharing, camera, microphone) plus a timer for recordings.
+ * (recording, sharing, camera, microphone). Hovering an icon emits
+ * `icon-hover` so the extension can show who is using it.
  */
-export const BubbleView = GObject.registerClass(
-class BubbleView extends St.BoxLayout {
+export const BubbleView = GObject.registerClass({
+    Signals: {'icon-hover': {param_types: [GObject.TYPE_STRING, GObject.TYPE_BOOLEAN]}},
+}, class BubbleView extends St.BoxLayout {
     _icons = new Map();
 
     constructor() {
         super({style_class: 'island-view island-bubble-view', y_align: Clutter.ActorAlign.CENTER});
         this._iconBox = new St.BoxLayout({style_class: 'island-privacy-icons', y_align: Clutter.ActorAlign.CENTER});
-        this.timer = new Odometer({style_class: 'island-odometer island-timer', visible: false});
         this.add_child(this._iconBox);
-        this.add_child(this.timer);
+    }
+
+    /** The icon actor for an active kind (to anchor a tooltip). */
+    iconFor(kind) {
+        return this._icons.get(kind) ?? null;
     }
 
     update(state) {
@@ -155,7 +147,10 @@ class BubbleView extends St.BoxLayout {
                     style_class: `island-privacy-icon island-privacy-${kind}`,
                     icon_size: 15,
                     y_align: Clutter.ActorAlign.CENTER,
+                    reactive: true,
+                    track_hover: true,
                 });
+                icon.connect('notify::hover', () => this.emit('icon-hover', kind, icon.hover));
                 this._icons.set(kind, icon);
                 this._iconBox.add_child(icon);
                 if (this.mapped) {
@@ -177,16 +172,6 @@ class BubbleView extends St.BoxLayout {
             else
                 icon.remove_style_class_name('island-privacy-muted');
         });
-
-        const timed = kinds.find(k => TIMED_KINDS.includes(k));
-        this.timer.visible = !!timed;
-        if (timed) {
-            this.timer.setText(formatElapsed(GLib.get_monotonic_time() - state.sinceOf(timed)));
-            // Colour the timer like the activity it times.
-            for (const k of TIMED_KINDS)
-                this.timer.remove_style_class_name(`island-privacy-${k}`);
-            this.timer.add_style_class_name(`island-privacy-${timed}`);
-        }
     }
 });
 

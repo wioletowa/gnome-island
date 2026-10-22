@@ -27,6 +27,8 @@ const IslandPill = GObject.registerClass({
     }
 
     pointerInside = false;
+    edgeActor = null;
+    edgePadding = 0;
 
     vfunc_enter_event(event) {
         this._setInside(true);
@@ -58,6 +60,15 @@ const IslandPill = GObject.registerClass({
                 continue;
             const [, natW] = actor.get_preferred_width(-1);
             const [, natH] = actor.get_preferred_height(natW);
+            if (actor === this.edgeActor) {
+                // Centred in the right padding, so it never changes the
+                // capsule's size or moves the content.
+                const x = Math.round(w - this.edgePadding / 2 - natW / 2);
+                child.set_origin(x, Math.floor(h / 2) - Math.floor(natH / 2));
+                child.set_size(natW, natH);
+                actor.allocate(child);
+                continue;
+            }
             // The pill width is always even and centred on an integer pixel,
             // so floor(w/2) - floor(natW/2) keeps content fixed on screen
             // while the capsule grows around it.
@@ -80,8 +91,9 @@ class SideBubble {
     current = null;
     wanted = false;
 
-    constructor(side, driver, params) {
+    constructor(side, driver, params, mode = 'grow') {
         this.side = side;
+        this.mode = mode;
         this.pill = new IslandPill(`island-pill island-bubble island-bubble-${side}`);
         this.pill.visible = false;
         this.size = driver.add(new Spring(0, params));
@@ -108,6 +120,10 @@ class SideBubble {
             const [, natW] = entry.actor.get_preferred_width(-1);
             extra = Math.max(0, natW + padding - diameter);
         }
+        if (this.mode === 'height') {
+            this._stageHeight(entry, diameter, extra);
+            return;
+        }
         if (this.wanted) {
             this.size.target = diameter;
             if (this.size.value > diameter * 0.85) {
@@ -125,6 +141,28 @@ class SideBubble {
         }
     }
 
+    /**
+     * The capsule has its final width from the first frame and opens from a
+     * thin line to full height; content fades in once it is mostly open.
+     */
+    _stageHeight(entry, diameter, extra) {
+        if (this.wanted) {
+            // Width only animates when the content changes while shown.
+            if (this.size.value < 0.5)
+                this.extra.snap(extra);
+            else
+                this.extra.target = extra;
+            this.size.target = diameter;
+            if (this.size.value > diameter * 0.6 && entry)
+                entry.presence.target = 1;
+        } else {
+            if (entry)
+                entry.presence.target = 0;
+            if (!entry || entry.presence.value < 0.3)
+                this.size.target = 0;
+        }
+    }
+
     /** Hides the capsule once it has shrunk back to nothing. */
     settle() {
         if (!this.wanted && this.size.value < 0.5 && this.size.target === 0) {
@@ -137,6 +175,15 @@ class SideBubble {
     allocate(pillX1, pillX2, pillY, pillH, diameter, gap) {
         const s = Math.max(0, Math.min(diameter * 1.2, this.size.value));
         const extra = Math.max(0, this.extra.value);
+        if (this.mode === 'height') {
+            const w = diameter + extra;
+            const x = this.side === 'right' ? pillX2 + gap : pillX1 - gap - w;
+            const box = new Clutter.ActorBox();
+            box.set_origin(Math.round(x), Math.round(pillY + (pillH - s) / 2));
+            box.set_size(Math.round(w), Math.round(s));
+            this.pill.allocate(box);
+            return;
+        }
         const w = s + extra;
         // The dot starts at the centre of where the circle will be; extra
         // width grows away from the island.
@@ -165,6 +212,7 @@ export const Island = GObject.registerClass({
     },
 }, class Island extends St.Widget {
     _views = new Map();
+    _edgeViews = [];
     _current = null;
     _blurEnabled = true;
     _destroyed = false;
@@ -184,7 +232,7 @@ export const Island = GObject.registerClass({
 
         this.pill = new IslandPill('island-pill');
         this._bubbles = {
-            left: new SideBubble('left', this._driver, params),
+            left: new SideBubble('left', this._driver, params, 'height'),
             right: new SideBubble('right', this._driver, params),
         };
         this.add_child(this._bubbles.left.pill);
@@ -244,6 +292,7 @@ export const Island = GObject.registerClass({
 
     setMetrics(metrics) {
         this._metrics = metrics;
+        this.pill.edgePadding = metrics.hPadding;
         this.queue_relayout();
         this.retarget();
     }
@@ -307,10 +356,32 @@ export const Island = GObject.registerClass({
         actor.visible = false;
         actor.opacity = 0;
         parent.add_child(actor);
-        map.set(name, {actor, presence, blur, height: opts.height ?? null});
+        map.set(name, {actor, presence, blur, height: opts.height ?? null, keepSize: !!opts.keepSize});
 
         // Natural size changes (new track title, clock width) retarget the capsule.
         actor.connect('notify::allocation', () => this._queueRetarget());
+    }
+
+    /**
+     * An actor drawn in the pill's right padding (the unread dot), shown
+     * only while one of `views` is the active view.
+     */
+    setEdgeActor(actor, views) {
+        this._edgeViews = views;
+        this.pill.edgeActor = actor;
+        this.pill.edgePadding = this._metrics.hPadding;
+        this.pill.add_child(actor);
+        this._applyEdge();
+    }
+
+    _applyEdge() {
+        const actor = this.pill.edgeActor;
+        if (!actor)
+            return;
+        let p = 0;
+        for (const name of this._edgeViews)
+            p += Math.max(0, this._views.get(name)?.presence.value ?? 0);
+        actor.opacity = Math.round(255 * Math.min(1, p));
     }
 
     setViewHeight(name, height) {
@@ -362,8 +433,15 @@ export const Island = GObject.registerClass({
             const h = Math.max(baseH, entry.height ?? 0);
             const maxW = Math.max(h, this.width - 2 * m.hPadding);
             const pad = expanded ? 4 : m.hPadding;
-            this._w.target = Math.min(maxW, Math.max(h, natW + 2 * pad));
-            this._h.target = h;
+            const w = Math.min(maxW, Math.max(h, natW + 2 * pad));
+            if (entry.keepSize) {
+                // Transient views (workspace switch) reuse the current
+                // capsule and only grow if they really do not fit.
+                this._w.target = Math.max(this._w.target, w);
+            } else {
+                this._w.target = w;
+                this._h.target = h;
+            }
         }
 
         this._stageBubbles();
@@ -400,6 +478,7 @@ export const Island = GObject.registerClass({
     _onFrame() {
         for (const e of this._views.values())
             this._applyPresence(e);
+        this._applyEdge();
         this._stageBubbles();
         for (const b of Object.values(this._bubbles)) {
             for (const e of b.views.values())
@@ -418,6 +497,7 @@ export const Island = GObject.registerClass({
             e.presence.snap();
             this._applyPresence(e);
         }
+        this._applyEdge();
         this.queue_relayout();
     }
 });

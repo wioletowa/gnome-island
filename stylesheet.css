@@ -35,7 +35,8 @@
 }
 
 .island-messages-dot {
-  icon-size: 1.091em;
+  /* Sits in the capsule's right padding; small enough to keep clear of the digits. */
+  icon-size: 0.8em;
 }
 
 /* Our expanded row is named "panel" to inherit the stock indicator styling;
@@ -80,9 +81,6 @@
   background-color: #30d158;
 }
 
-.island-timer {
-  font-size: 0.95em;
-}
 
 .island-privacy-screencast { color: #ff453a; }
 .island-privacy-remote-recording { color: #ff453a; }
@@ -141,4 +139,13 @@
 .island-workspace-dot {
   border-radius: 4px;
   background-color: #ffffff;
+}
+
+.island-tooltip {
+  background-color: rgba(0, 0, 0, 0.92);
+  color: #ffffff;
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 0.9em;
+  font-weight: bold;
 }

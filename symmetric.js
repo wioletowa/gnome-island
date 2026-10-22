@@ -19,8 +19,12 @@ class SymmetricBox extends St.Widget {
             y_align: Clutter.ActorAlign.CENTER,
         });
         this._hugEdges = params.hugEdges ?? false;
-        this.left = new St.BoxLayout({style_class: 'island-sym-left', y_align: Clutter.ActorAlign.CENTER});
-        this.right = new St.BoxLayout({style_class: 'island-sym-right', y_align: Clutter.ActorAlign.CENTER});
+        this._fillHeight = params.fillHeight ?? false;
+        // Clutter shrinks non-FILL actors to their natural size inside the
+        // box we give them, so filling needs FILL alignment too.
+        const yAlign = this._fillHeight ? Clutter.ActorAlign.FILL : Clutter.ActorAlign.CENTER;
+        this.left = new St.BoxLayout({style_class: 'island-sym-left', y_align: yAlign});
+        this.right = new St.BoxLayout({style_class: 'island-sym-right', y_align: yAlign});
         this.add_child(this.left);
         this.add_child(this.right);
     }
@@ -81,7 +85,9 @@ class SymmetricBox extends St.Widget {
         const child = new Clutter.ActorBox();
 
         const place = (actor, x, width) => {
-            const [, natH] = actor.get_preferred_height(width);
+            // fillHeight gives children the full height, like the top bar
+            // does, so button highlights cover the whole capsule height.
+            const natH = this._fillHeight ? h : actor.get_preferred_height(width)[1];
             const y = content.y1 + Math.floor((h - natH) / 2);
             child.set_origin(x, y);
             child.set_size(width, natH);

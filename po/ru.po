@@ -222,3 +222,18 @@ msgstr "Часы всегда остаются по центру, обе сто�
 
 msgid "Reset"
 msgstr "Сбросить"
+
+msgid "Screen recording"
+msgstr "Запись экрана"
+
+msgid "Screen sharing"
+msgstr "Демонстрация экрана"
+
+msgid "Camera"
+msgstr "Камера"
+
+msgid "Microphone"
+msgstr "Микрофон"
+
+msgid "Microphone (muted)"
+msgstr "Микрофон (выключен)"
