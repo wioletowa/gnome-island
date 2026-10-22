@@ -29,16 +29,41 @@ interface ViewEntry {
  * and centred, so when the capsule morphs the content is revealed or
  * clipped rather than squeezed.
  */
-const IslandPill = GObject.registerClass(
-class IslandPill extends St.Widget {
+const IslandPill = GObject.registerClass({
+    Signals: {'pointer-changed': {}},
+}, class IslandPill extends St.Widget {
     constructor(styleClass: string) {
         super({
             style_class: styleClass,
             reactive: true,
-            track_hover: true,
+            // No track_hover: toggling the :hover pseudo-class restyles the
+            // capsule and St drops the 999px radius for a frame (a square
+            // flash on the small bubbles). Hover is tracked by hand below.
             can_focus: true,
             clip_to_allocation: true,
         });
+    }
+
+    pointerInside = false;
+
+    vfunc_enter_event(event: Clutter.Event): boolean {
+        this._setInside(true);
+        return super.vfunc_enter_event(event);
+    }
+
+    vfunc_leave_event(event: Clutter.Event): boolean {
+        const related = event.get_related();
+        // Moving onto one of our own children is not leaving.
+        if (!related || !this.contains(related))
+            this._setInside(false);
+        return super.vfunc_leave_event(event);
+    }
+
+    private _setInside(inside: boolean) {
+        if (this.pointerInside === inside)
+            return;
+        this.pointerInside = inside;
+        this.emit('pointer-changed');
     }
 
     vfunc_allocate(box: Clutter.ActorBox) {
@@ -65,6 +90,93 @@ class IslandPill extends St.Widget {
 
 type PillType = InstanceType<typeof IslandPill>;
 
+export type BubbleSide = 'left' | 'right';
+
+/**
+ * A small capsule beside the island. It grows from a dot into a circle,
+ * optionally widens (away from the island), and only then fades its
+ * content in; hiding runs the same steps backwards.
+ */
+class SideBubble {
+    readonly pill: PillType;
+    readonly side: BubbleSide;
+    readonly views = new Map<string, ViewEntry>();
+    size: Spring;
+    extra: Spring;
+    current: string | null = null;
+    wanted = false;
+
+    constructor(side: BubbleSide, driver: SpringDriver, params: SpringParams) {
+        this.side = side;
+        this.pill = new IslandPill(`island-pill island-bubble island-bubble-${side}`);
+        this.pill.visible = false;
+        this.size = driver.add(new Spring(0, params));
+        this.extra = driver.add(new Spring(0, params));
+    }
+
+    set(name: string | null) {
+        if (name === (this.wanted ? this.current : null))
+            return;
+        if (name) {
+            // Switching content while shown just crossfades inside.
+            if (this.current && this.current !== name)
+                this.views.get(this.current)!.presence.target = 0;
+            this.current = name;
+            this.pill.visible = true;
+        }
+        this.wanted = name !== null;
+    }
+
+    stage(diameter: number, padding: number) {
+        const entry = this.current ? this.views.get(this.current) : null;
+        let extra = 0;
+        if (entry) {
+            const [, natW] = entry.actor.get_preferred_width(-1);
+            extra = Math.max(0, natW + padding - diameter);
+        }
+        if (this.wanted) {
+            this.size.target = diameter;
+            if (this.size.value > diameter * 0.85) {
+                this.extra.target = extra;
+                if (this.extra.value > extra - 2 && entry)
+                    entry.presence.target = 1;
+            }
+        } else {
+            if (entry)
+                entry.presence.target = 0;
+            if (!entry || entry.presence.value < 0.3)
+                this.extra.target = 0;
+            if (this.extra.value < 2)
+                this.size.target = 0;
+        }
+    }
+
+    /** Hides the capsule once it has shrunk back to nothing. */
+    settle() {
+        if (!this.wanted && this.size.value < 0.5 && this.size.target === 0) {
+            this.pill.visible = false;
+            this.current = null;
+        }
+    }
+
+    /** Places the bubble next to the pill spanning [pillX1, pillX2]. */
+    allocate(pillX1: number, pillX2: number, pillY: number, pillH: number, diameter: number, gap: number) {
+        const s = Math.max(0, Math.min(diameter * 1.2, this.size.value));
+        const extra = Math.max(0, this.extra.value);
+        const w = s + extra;
+        // The dot starts at the centre of where the circle will be; extra
+        // width grows away from the island.
+        const x = this.side === 'right'
+            ? pillX2 + gap + (diameter - s) / 2
+            : pillX1 - gap - (diameter - s) / 2 - w;
+        const y = pillY + (pillH - s) / 2;
+        const box = new Clutter.ActorBox();
+        box.set_origin(Math.round(x), Math.round(y));
+        box.set_size(Math.round(w), Math.round(s));
+        this.pill.allocate(box);
+    }
+}
+
 /**
  * One island per monitor. It owns a set of named views and morphs between
  * them with springs: capsule width/height and each view's presence (which
@@ -73,26 +185,19 @@ type PillType = InstanceType<typeof IslandPill>;
 export const Island = GObject.registerClass({
     Signals: {
         'pill-clicked': {param_types: [GObject.TYPE_UINT]},
-        'bubble-clicked': {param_types: [GObject.TYPE_UINT]},
+        'bubble-clicked': {param_types: [GObject.TYPE_STRING]},
         'hover-changed': {param_types: [GObject.TYPE_BOOLEAN]},
         'key-escape': {},
     },
 }, class Island extends St.Widget {
     pill!: PillType;
-    bubble!: PillType;
+    private _bubbles!: Record<BubbleSide, SideBubble>;
     private _metrics!: IslandMetrics;
     private _driver!: SpringDriver;
     private _views = new Map<string, ViewEntry>();
-    private _bubbleViews = new Map<string, ViewEntry>();
     private _current: string | null = null;
-    private _currentBubble: string | null = null;
     private _w!: Spring;
     private _h!: Spring;
-    /** Bubble diameter: grows from a dot into a circle. */
-    private _bs!: Spring;
-    /** Extra bubble width beyond the circle (e.g. for a timer). */
-    private _bx!: Spring;
-    private _bubbleWanted = false;
     private _blurEnabled = true;
     private _destroyed = false;
     private _relayoutId = 0;
@@ -105,29 +210,36 @@ export const Island = GObject.registerClass({
         });
         this._metrics = metrics;
 
-        this.pill = new IslandPill('island-pill');
-        this.bubble = new IslandPill('island-pill island-bubble');
-        this.add_child(this.bubble);
-        this.add_child(this.pill);
-
         this._driver = new SpringDriver(this, () => this._onFrame());
         this._w = this._driver.add(new Spring(metrics.compactHeight * 3, params));
         this._h = this._driver.add(new Spring(metrics.compactHeight, params));
-        this._bs = this._driver.add(new Spring(0, params));
-        this._bx = this._driver.add(new Spring(0, params));
 
-        for (const p of [this.pill, this.bubble]) {
-            const signal = p === this.pill ? 'pill-clicked' : 'bubble-clicked';
+        this.pill = new IslandPill('island-pill');
+        this._bubbles = {
+            left: new SideBubble('left', this._driver, params),
+            right: new SideBubble('right', this._driver, params),
+        };
+        this.add_child(this._bubbles.left.pill);
+        this.add_child(this._bubbles.right.pill);
+        this.add_child(this.pill);
+
+        const emitClick = (p: PillType, button: number) => {
+            if (p === this.pill)
+                this.emit('pill-clicked', button);
+            else
+                this.emit('bubble-clicked', p === this._bubbles.left.pill ? 'left' : 'right');
+        };
+        for (const p of this.capsules) {
             p.connect('button-release-event', (_a, event: Clutter.Event) => {
-                this.emit(signal, event.get_button());
+                emitClick(p, event.get_button());
                 return Clutter.EVENT_PROPAGATE;
             });
             p.connect('touch-event', (_a, event: Clutter.Event) => {
                 if (event.type() === Clutter.EventType.TOUCH_END)
-                    this.emit(signal, 1);
+                    emitClick(p, 1);
                 return Clutter.EVENT_PROPAGATE;
             });
-            p.connect('notify::hover', () => this.emit('hover-changed', this.hovered));
+            p.connect('pointer-changed', () => this.emit('hover-changed', this.hovered));
             p.connect('key-press-event', (_a, event: Clutter.Event) => {
                 if (event.get_key_symbol() === Clutter.KEY_Escape) {
                     this.emit('key-escape');
@@ -136,8 +248,6 @@ export const Island = GObject.registerClass({
                 return Clutter.EVENT_PROPAGATE;
             });
         }
-        this.bubble.visible = false;
-
         this.connect('destroy', () => {
             this._destroyed = true;
             if (this._relayoutId)
@@ -146,8 +256,18 @@ export const Island = GObject.registerClass({
         });
     }
 
+    /** The main pill and both bubbles (for styling and hover). */
+    get capsules(): PillType[] {
+        return [this.pill, this._bubbles.left.pill, this._bubbles.right.pill];
+    }
+
     get hovered(): boolean {
-        return this.pill.hover || this.bubble.hover;
+        return this.capsules.some(p => p.pointerInside);
+    }
+
+    private _allViews(): ViewEntry[] {
+        return [...this._views.values(), ...this._bubbles.left.views.values(),
+            ...this._bubbles.right.views.values()];
     }
 
     get currentView() {
@@ -166,7 +286,7 @@ export const Island = GObject.registerClass({
 
     setBlurEnabled(enabled: boolean) {
         this._blurEnabled = enabled;
-        for (const e of [...this._views.values(), ...this._bubbleViews.values()]) {
+        for (const e of this._allViews()) {
             if (e.blur)
                 e.blur.enabled = enabled;
         }
@@ -201,21 +321,14 @@ export const Island = GObject.registerClass({
         child.set_size(pw, ph);
         this.pill.allocate(child);
 
-        // The bubble lives to the right of the pill and follows its edge. It
-        // grows from a dot at the centre of where the circle will be.
-        const bh = m.compactHeight;
-        const s = Math.max(0, Math.min(bh * 1.2, this._bs.value));
-        const extra = Math.max(0, this._bx.value);
-        const bx = x0 + pw + m.bubbleGap + (bh - s) / 2;
-        const by = y0 + (ph - s) / 2;
-        child.set_origin(Math.round(bx), Math.round(by));
-        child.set_size(Math.round(s + extra), Math.round(s));
-        this.bubble.allocate(child);
+        // Bubbles sit beside the pill and follow its edges.
+        for (const b of Object.values(this._bubbles))
+            b.allocate(x0, x0 + pw, y0, ph, m.compactHeight, m.bubbleGap);
     }
 
-    addView(name: string, actor: Clutter.Actor, opts: {bubble?: boolean, height?: number} = {}) {
-        const map = opts.bubble ? this._bubbleViews : this._views;
-        const parent = opts.bubble ? this.bubble : this.pill;
+    addView(name: string, actor: Clutter.Actor, opts: {bubble?: BubbleSide, height?: number} = {}) {
+        const map = opts.bubble ? this._bubbles[opts.bubble].views : this._views;
+        const parent = opts.bubble ? this._bubbles[opts.bubble].pill : this.pill;
         const presence = this._driver.add(new Spring(0));
         presence.params = this._w.params;
         let blur: Shell.BlurEffect | null = null;
@@ -254,15 +367,8 @@ export const Island = GObject.registerClass({
         this.retarget();
     }
 
-    setBubbleView(name: string | null) {
-        if (this._currentBubble === name)
-            return;
-        // Switching content while shown just crossfades inside the bubble.
-        if (name)
-            this._currentBubble = name;
-        this._bubbleWanted = name !== null;
-        if (name)
-            this.bubble.visible = true;
+    setBubbleView(side: BubbleSide, name: string | null) {
+        this._bubbles[side].set(name);
         this.retarget();
     }
 
@@ -292,7 +398,7 @@ export const Island = GObject.registerClass({
             this._h.target = h;
         }
 
-        this._stageBubble();
+        this._stageBubbles();
         this._driver.kick();
     }
 
@@ -317,45 +423,20 @@ export const Island = GObject.registerClass({
         }
     }
 
-    /**
-     * Bubble choreography. Showing: dot -> circle -> (widen) -> icon fades
-     * in. Hiding runs the same steps backwards.
-     */
-    private _stageBubble() {
-        const bh = this._metrics.compactHeight;
-        const entry = this._currentBubble ? this._bubbleViews.get(this._currentBubble) : null;
-        let extra = 0;
-        if (entry) {
-            const [, natW] = entry.actor.get_preferred_width(-1);
-            extra = Math.max(0, natW + this._metrics.hPadding - bh);
-        }
-        if (this._bubbleWanted) {
-            this._bs.target = bh;
-            if (this._bs.value > bh * 0.85) {
-                this._bx.target = extra;
-                if (this._bx.value > extra - 2 && entry)
-                    entry.presence.target = 1;
-            }
-        } else {
-            if (entry)
-                entry.presence.target = 0;
-            if (!entry || entry.presence.value < 0.3)
-                this._bx.target = 0;
-            if (this._bx.value < 2)
-                this._bs.target = 0;
-        }
+    private _stageBubbles() {
+        for (const b of Object.values(this._bubbles))
+            b.stage(this._metrics.compactHeight, this._metrics.hPadding);
         this._driver.kick();
     }
 
     private _onFrame() {
         for (const e of this._views.values())
             this._applyPresence(e);
-        this._stageBubble();
-        for (const e of this._bubbleViews.values())
-            this._applyPresence(e);
-        if (!this._bubbleWanted && this._bs.value < 0.5 && this._bs.target === 0) {
-            this.bubble.visible = false;
-            this._currentBubble = null;
+        this._stageBubbles();
+        for (const b of Object.values(this._bubbles)) {
+            for (const e of b.views.values())
+                this._applyPresence(e);
+            b.settle();
         }
         this.queue_relayout();
     }
@@ -365,7 +446,7 @@ export const Island = GObject.registerClass({
         this.retarget();
         this._w.snap();
         this._h.snap();
-        for (const e of [...this._views.values(), ...this._bubbleViews.values()]) {
+        for (const e of this._allViews()) {
             e.presence.snap();
             this._applyPresence(e);
         }

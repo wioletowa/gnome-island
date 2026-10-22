@@ -108,3 +108,31 @@
   font-weight: bold;
   max-width: 320px;
 }
+
+.island-osd-view {
+  spacing: 10px;
+}
+
+.island-osd-track {
+  height: 6px;
+  border-radius: 3px;
+  background-color: rgba(255, 255, 255, 0.22);
+}
+
+.island-osd-fill {
+  border-radius: 3px;
+  background-color: #ffffff;
+}
+
+.island-osd-over {
+  background-color: #ff9f0a;
+}
+
+.island-workspace-dots {
+  spacing: 6px;
+}
+
+.island-workspace-dot {
+  border-radius: 4px;
+  background-color: #ffffff;
+}

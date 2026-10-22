@@ -4,6 +4,7 @@ import St from 'gi://St';
 
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
+import * as WorkspaceSwitcherPopup from 'resource:///org/gnome/shell/ui/workspaceSwitcherPopup.js';
 
 import {Config} from './config.js';
 import {Island, IslandType} from './island.js';
@@ -16,6 +17,7 @@ import {IslandNotification, NotificationWatcher, NotificationWatcherType} from '
 import {
     BubbleView, BubbleViewType, ClockWidget, ClockWidgetType, CoverArt, CoverArtType,
     MediaView, MediaViewType, MessagesDotMirror, NotificationView, NotificationViewType,
+    OsdView, OsdViewType, WorkspaceDots, WorkspaceDotsType,
 } from './views.js';
 import {VisualizerBars, VisualizerBarsType} from './visualizer.js';
 
@@ -29,10 +31,18 @@ interface IslandHost {
     media: MediaViewType;
     notification: NotificationViewType;
     bubble: BubbleViewType;
+    osd: OsdViewType;
+    osdTimeoutId: number;
+    workspaces: WorkspaceDotsType;
     /** Own chrome container for non-primary monitors; null on primary. */
     container: St.Widget | null;
     monitorIndex: number;
 }
+
+/** Same as GNOME's OSD hide timeout. */
+const OSD_TIMEOUT = 1500;
+/** How long the workspace dots replace the collapsed island. */
+const WORKSPACE_TIMEOUT = 1000;
 
 /** Notifications that waited longer than this (while expanded) are dropped. */
 const NOTIFICATION_MAX_WAIT_US = 10_000_000;
@@ -59,6 +69,10 @@ export default class IslandExtension extends Extension {
     private _notifQueue: [IslandNotification, number][] = [];
     private _notifActive = false;
     private _notifTimeoutId = 0;
+    private _wsActive = false;
+    private _wsTimeoutId = 0;
+    private _origShowOsd: ((...args: any[]) => void) | null = null;
+    private _origWsDisplay: ((index: number) => void) | null = null;
 
     enable() {
         this._config = new Config(this.getSettings());
@@ -95,6 +109,10 @@ export default class IslandExtension extends Extension {
         this._ticker.add(this._tickCb);
 
         this._patchPanel();
+        this._patchOsd();
+        this._patchWorkspacePopup();
+        global.workspace_manager.connectObject('active-workspace-changed',
+            () => this._onWorkspaceChanged(), this);
 
         Main.layoutManager.connectObject('monitors-changed', () => this._buildHosts(), this);
         global.stage.connectObject('captured-event', (_s: Clutter.Actor, e: Clutter.Event) =>
@@ -107,12 +125,17 @@ export default class IslandExtension extends Extension {
 
     disable() {
         this._cancelCollapse();
-        for (const id of [this._pausedTimeoutId, this._notifTimeoutId]) {
+        for (const id of [this._pausedTimeoutId, this._notifTimeoutId, this._wsTimeoutId]) {
             if (id)
                 GLib.source_remove(id);
         }
         this._pausedTimeoutId = 0;
         this._notifTimeoutId = 0;
+        this._wsTimeoutId = 0;
+        this._wsActive = false;
+        global.workspace_manager.disconnectObject(this);
+        this._unpatchWorkspacePopup();
+        this._unpatchOsd();
         this._notifQueue = [];
         this._notifActive = false;
         this._pausedSince = 0;
@@ -225,17 +248,31 @@ export default class IslandExtension extends Extension {
         row.set_style(`height: ${config.metrics.expandedHeight}px;`);
         island.addView('expanded', row);
 
+        const workspaces = new WorkspaceDots();
+        island.addView('workspaces', workspaces);
+
         const bubble = new BubbleView();
-        island.addView('privacy', bubble, {bubble: true});
+        island.addView('privacy', bubble, {bubble: 'right'});
+
+        const osd = new OsdView();
+        island.addView('osd', osd, {bubble: 'left'});
 
         const host: IslandHost = {
             island, row, rowCover, rowBars, clock, media, notification, bubble,
-            container: null, monitorIndex,
+            osd, osdTimeoutId: 0, workspaces, container: null, monitorIndex,
         };
         this._applyColors(host);
 
         island.connect('pill-clicked', (_i, button: number) => this._onPillClicked(host, button));
-        island.connect('bubble-clicked', () => this._onBubbleClicked(host));
+        island.connect('bubble-clicked', (_i, side: string) => {
+            if (side === 'right')
+                this._onBubbleClicked(host);
+        });
+        island.connect('destroy', () => {
+            if (host.osdTimeoutId)
+                GLib.source_remove(host.osdTimeoutId);
+            host.osdTimeoutId = 0;
+        });
         island.connect('hover-changed', (_i, hovered: boolean) => this._onHoverChanged(host, hovered));
         island.connect('key-escape', () => this._collapse());
         island.pill.connect('key-focus-out', () => this._onKeyFocusOut(host));
@@ -260,8 +297,9 @@ export default class IslandExtension extends Extension {
     private _applyColors(host: IslandHost) {
         const {background, foreground, accent} = this._config!.colors;
         const style = `background-color: ${background}; color: ${foreground};`;
-        host.island.pill.set_style(style);
-        host.island.bubble.set_style(style);
+        for (const capsule of host.island.capsules)
+            capsule.set_style(style);
+        host.osd.setAccent(accent);
         host.media.bars.setColor(accent);
         host.rowBars.setColor(accent);
         host.notification.setAccent(accent);
@@ -311,14 +349,16 @@ export default class IslandExtension extends Extension {
             host.rowBars.visible = showEnds && this._config.visualizerEnabled;
             host.bubble.update(kind, since);
             // The privacy bubble always lives beside the island, never inside it.
-            host.island.setBubbleView(kind ? 'privacy' : null);
+            host.island.setBubbleView('right', kind ? 'privacy' : null);
 
             if (host === this._expanded) {
                 host.island.setView('expanded');
                 continue;
             }
             let view = 'clock';
-            if (this._notifActive)
+            if (this._wsActive)
+                view = 'workspaces';
+            else if (this._notifActive)
                 view = 'notification';
             else if (mediaVisible)
                 view = 'media';
@@ -516,6 +556,85 @@ export default class IslandExtension extends Extension {
             return Clutter.EVENT_PROPAGATE;
         this._collapse();
         return Clutter.EVENT_PROPAGATE;
+    }
+
+    // --- OSD (volume, brightness, microphone…) ------------------------------
+
+    private _patchOsd() {
+        const mgr = Main.osdWindowManager as any;
+        this._origShowOsd = mgr._showOsdWindow;
+        // Every OSD (showOne/showAll/D-Bus) ends up here, per monitor.
+        mgr._showOsdWindow = (monitorIndex: number, icon: any, label: string | null,
+            level?: number | null, maxLevel?: number | null) => {
+            const host = this._hosts.find(h => h.monitorIndex === monitorIndex);
+            if (!host) {
+                this._origShowOsd!.call(mgr, monitorIndex, icon, label, level, maxLevel);
+                return;
+            }
+            this._showOsd(host, icon, level, maxLevel);
+        };
+    }
+
+    private _unpatchOsd() {
+        if (this._origShowOsd)
+            (Main.osdWindowManager as any)._showOsdWindow = this._origShowOsd;
+        this._origShowOsd = null;
+    }
+
+    private _showOsd(host: IslandHost, icon: any, level?: number | null, maxLevel?: number | null) {
+        host.osd.show_(icon, level, maxLevel);
+        host.island.setBubbleView('left', 'osd');
+        if (host.osdTimeoutId)
+            GLib.source_remove(host.osdTimeoutId);
+        host.osdTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, OSD_TIMEOUT, () => {
+            host.osdTimeoutId = 0;
+            host.island.setBubbleView('left', null);
+            return GLib.SOURCE_REMOVE;
+        });
+    }
+
+    // --- Workspace switching ---------------------------------------------
+
+    private _patchWorkspacePopup() {
+        const proto = WorkspaceSwitcherPopup.WorkspaceSwitcherPopup.prototype as any;
+        this._origWsDisplay = proto.display;
+        // Keep the popup's lifetime (the window manager waits for it to be
+        // destroyed) but never show it; the island shows the switch instead.
+        proto.display = function (this: any, index: number) {
+            this._activeWorkspaceIndex = index;
+            if (this._timeoutId)
+                GLib.source_remove(this._timeoutId);
+            this._timeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 600, () => {
+                this._timeoutId = 0;
+                this.destroy();
+                return GLib.SOURCE_REMOVE;
+            });
+        };
+    }
+
+    private _unpatchWorkspacePopup() {
+        if (this._origWsDisplay)
+            (WorkspaceSwitcherPopup.WorkspaceSwitcherPopup.prototype as any).display = this._origWsDisplay;
+        this._origWsDisplay = null;
+    }
+
+    private _onWorkspaceChanged() {
+        if (Main.overview.visible)
+            return;
+        const wm = global.workspace_manager;
+        const active = wm.get_active_workspace_index();
+        for (const host of this._hosts)
+            host.workspaces.show_(active, wm.n_workspaces);
+        this._wsActive = true;
+        this._updateViews();
+        if (this._wsTimeoutId)
+            GLib.source_remove(this._wsTimeoutId);
+        this._wsTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, WORKSPACE_TIMEOUT, () => {
+            this._wsTimeoutId = 0;
+            this._wsActive = false;
+            this._updateViews();
+            return GLib.SOURCE_REMOVE;
+        });
     }
 
     // --- Panel API patches -------------------------------------------------

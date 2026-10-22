@@ -40,7 +40,8 @@ class ExpandedRow extends SymmetricBox {
     private _trailing: Clutter.Actor | null = null;
 
     constructor() {
-        super({name: 'panel', style_class: 'island-expanded-row'});
+        // Side items stack against the outer corners, the clock stays centred.
+        super({name: 'panel', style_class: 'island-expanded-row', hugEdges: true});
         this.slots = new Map();
         for (const name of [...SIDE_SLOTS, 'clock' as SlotName]) {
             const box = new St.BoxLayout({

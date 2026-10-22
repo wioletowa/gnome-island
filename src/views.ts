@@ -227,3 +227,122 @@ class NotificationView extends SymmetricBox {
 });
 
 export type NotificationViewType = InstanceType<typeof NotificationView>;
+
+const LEVEL_WIDTH = 64;
+
+/**
+ * Replacement for GNOME's OSD popups (volume, brightness, microphone…):
+ * icon and level bar, without the device label.
+ */
+export const OsdView = GObject.registerClass(
+class OsdView extends St.BoxLayout {
+    private _icon: St.Icon;
+    private _track: St.Widget;
+    private _fill: St.Widget;
+    private _over: St.Widget;
+
+    constructor() {
+        super({style_class: 'island-view island-osd-view', y_align: Clutter.ActorAlign.CENTER});
+        this._icon = new St.Icon({style_class: 'island-osd-icon', icon_size: 16, y_align: Clutter.ActorAlign.CENTER});
+        this._track = new St.Widget({
+            style_class: 'island-osd-track',
+            width: LEVEL_WIDTH,
+            y_align: Clutter.ActorAlign.CENTER,
+            clip_to_allocation: true,
+        });
+        this._fill = new St.Widget({style_class: 'island-osd-fill'});
+        // Part of the bar above 100% (volume over-amplification).
+        this._over = new St.Widget({style_class: 'island-osd-fill island-osd-over', visible: false});
+        this._track.add_child(this._fill);
+        this._track.add_child(this._over);
+        this.add_child(this._icon);
+        this.add_child(this._track);
+        this._track.connect('notify::height', () => {
+            this._fill.height = this._track.height;
+            this._over.height = this._track.height;
+        });
+    }
+
+    setAccent(color: string) {
+        this._over.set_style(`background-color: ${color};`);
+    }
+
+    show_(icon: Gio.Icon | null, level: number | null | undefined, maxLevel: number | null | undefined) {
+        this._icon.gicon = icon;
+        const hasLevel = typeof level === 'number' && level >= 0;
+        this._track.visible = hasLevel;
+        if (!hasLevel)
+            return;
+        const max = typeof maxLevel === 'number' && maxLevel > 0 ? maxLevel : 1;
+        const frac = Math.max(0, Math.min(1, level / max));
+        // Mark the over-amplified range like GNOME does, relative to 100%.
+        const normal = Math.min(1, 1 / max);
+        const fillW = Math.round(LEVEL_WIDTH * Math.min(frac, normal));
+        const overW = Math.round(LEVEL_WIDTH * Math.max(0, frac - normal));
+        const animate = this.mapped;
+        const ease = (actor: St.Widget, props: {width: number, x?: number}) => {
+            actor.remove_all_transitions();
+            if (!animate) {
+                actor.set(props);
+                return;
+            }
+            actor.ease({...props, duration: 180, mode: Clutter.AnimationMode.EASE_OUT_QUAD});
+        };
+        ease(this._fill, {width: fillW});
+        this._over.visible = overW > 0;
+        ease(this._over, {width: overW, x: fillW});
+    }
+});
+
+export type OsdViewType = InstanceType<typeof OsdView>;
+
+const DOT = 7;
+const ACTIVE_DOT = 22;
+
+/** Workspace switch feedback: dots with the active one stretched, like GNOME's top bar. */
+export const WorkspaceDots = GObject.registerClass(
+class WorkspaceDots extends St.BoxLayout {
+    private _dots: St.Widget[] = [];
+    private _active = -1;
+
+    constructor() {
+        super({style_class: 'island-view island-workspace-dots', y_align: Clutter.ActorAlign.CENTER});
+    }
+
+    show_(active: number, count: number) {
+        const animate = this.mapped && this._dots.length === count;
+        if (this._dots.length !== count) {
+            for (const d of this._dots)
+                d.destroy();
+            this._dots = [];
+            for (let i = 0; i < count; i++) {
+                const dot = new St.Widget({
+                    style_class: 'island-workspace-dot',
+                    y_align: Clutter.ActorAlign.CENTER,
+                    width: DOT,
+                    height: DOT,
+                    opacity: 110,
+                });
+                this._dots.push(dot);
+                this.add_child(dot);
+            }
+            // Start from the previous workspace so the stretch slides over.
+            if (this._active >= 0 && this._active < count) {
+                this._dots[this._active].width = ACTIVE_DOT;
+                this._dots[this._active].opacity = 255;
+            }
+        }
+        this._active = active;
+        this._dots.forEach((dot, i) => {
+            const on = i === active;
+            const props = {width: on ? ACTIVE_DOT : DOT, opacity: on ? 255 : 110};
+            dot.remove_all_transitions();
+            if (animate || dot.mapped)
+                dot.ease({...props, duration: 260, mode: Clutter.AnimationMode.EASE_OUT_CUBIC});
+            else
+                dot.set(props);
+        });
+    }
+});
+
+export type WorkspaceDotsType = InstanceType<typeof WorkspaceDots>;
