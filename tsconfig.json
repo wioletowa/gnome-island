@@ -13,5 +13,5 @@
     "removeComments": false,
     "sourceMap": false
   },
-  "include": ["src/**/*.ts", "src/ambient.d.ts"]
+  "include": ["src/**/*.ts"]
 }

@@ -71,6 +71,7 @@ type PillType = InstanceType<typeof IslandPill>;
 export const Island = GObject.registerClass({
     Signals: {
         'pill-clicked': {param_types: [GObject.TYPE_UINT]},
+        'bubble-clicked': {param_types: [GObject.TYPE_UINT]},
         'hover-changed': {param_types: [GObject.TYPE_BOOLEAN]},
         'key-escape': {},
     },
@@ -111,13 +112,14 @@ export const Island = GObject.registerClass({
         this._gap = this._driver.add(new Spring(0, params));
 
         for (const p of [this.pill, this.bubble]) {
+            const signal = p === this.pill ? 'pill-clicked' : 'bubble-clicked';
             p.connect('button-release-event', (_a, event: Clutter.Event) => {
-                this.emit('pill-clicked', event.get_button());
+                this.emit(signal, event.get_button());
                 return Clutter.EVENT_PROPAGATE;
             });
             p.connect('touch-event', (_a, event: Clutter.Event) => {
                 if (event.type() === Clutter.EventType.TOUCH_END)
-                    this.emit('pill-clicked', 1);
+                    this.emit(signal, 1);
                 return Clutter.EVENT_PROPAGATE;
             });
             p.connect('notify::hover', () => this.emit('hover-changed', this.hovered));

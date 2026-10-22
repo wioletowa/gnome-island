@@ -38,3 +38,46 @@
 #panel.island-expanded-row .island-odometer.clock {
   padding: 0 0.6em;
 }
+
+/* Views */
+.island-view {
+  spacing: 10px;
+}
+
+.island-cover {
+  border-radius: 6px;
+  background-color: rgba(255, 255, 255, 0.12);
+}
+
+.island-visualizer {
+  spacing: 3px;
+  min-width: 1px;
+}
+
+.island-visualizer-bar {
+  width: 3px;
+  border-radius: 2px;
+  background-color: #30d158;
+}
+
+.island-timer {
+  font-size: 0.95em;
+}
+
+.island-privacy-screencast { color: #ff453a; }
+.island-privacy-sharing { color: #ff9f0a; }
+.island-privacy-camera { color: #30d158; }
+.island-privacy-microphone { color: #ff9f0a; }
+
+.island-bubble-view {
+  padding: 0;
+}
+
+.island-notification-view {
+  spacing: 8px;
+}
+
+.island-notification-app {
+  font-weight: bold;
+  max-width: 320px;
+}
