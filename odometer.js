@@ -11,10 +11,9 @@ const ROLL_DURATION = 420;
  */
 const OdometerCell = GObject.registerClass(
 class OdometerCell extends St.Widget {
-    private _label!: St.Label;
-    private _char = '';
+    _char = '';
 
-    constructor(char: string) {
+    constructor(char) {
         super({
             style_class: 'island-odometer-cell',
             clip_to_allocation: true,
@@ -26,7 +25,7 @@ class OdometerCell extends St.Widget {
         this.add_child(this._label);
     }
 
-    private _makeLabel(char: string): St.Label {
+    _makeLabel(char) {
         return new St.Label({
             text: char,
             x_align: Clutter.ActorAlign.CENTER,
@@ -38,7 +37,7 @@ class OdometerCell extends St.Widget {
         return this._char;
     }
 
-    setChar(char: string, animate: boolean) {
+    setChar(char, animate) {
         if (char === this._char)
             return;
         this._char = char;
@@ -79,9 +78,9 @@ class OdometerCell extends St.Widget {
  */
 export const Odometer = GObject.registerClass(
 class Odometer extends St.BoxLayout {
-    private _cells: InstanceType<typeof OdometerCell>[] = [];
+    _cells = [];
 
-    constructor(params: Partial<St.BoxLayout.ConstructorProps> = {}) {
+    constructor(params = {}) {
         super({
             style_class: 'island-odometer',
             y_align: Clutter.ActorAlign.CENTER,
@@ -89,12 +88,12 @@ class Odometer extends St.BoxLayout {
         });
     }
 
-    setText(text: string, animate = true) {
+    setText(text, animate = true) {
         const chars = [...text];
 
         // Trim or grow the cell list; new cells start empty and roll in.
         while (this._cells.length > chars.length)
-            this._cells.pop()!.destroy();
+            this._cells.pop().destroy();
         while (this._cells.length < chars.length) {
             const cell = new OdometerCell(animate ? '' : chars[this._cells.length]);
             this._cells.push(cell);
@@ -105,28 +104,26 @@ class Odometer extends St.BoxLayout {
     }
 });
 
-export type OdometerType = InstanceType<typeof Odometer>;
-
 /**
  * Fires once per wall-clock second, aligned to the second boundary so all
  * clocks tick together.
  */
 export class SecondTicker {
-    private _id = 0;
-    private _listeners = new Set<(now: GLib.DateTime) => void>();
+    _id = 0;
+    _listeners = new Set();
 
-    add(cb: (now: GLib.DateTime) => void) {
+    add(cb) {
         this._listeners.add(cb);
         if (!this._id)
             this._schedule();
         cb(GLib.DateTime.new_now_local());
     }
 
-    remove(cb: (now: GLib.DateTime) => void) {
+    remove(cb) {
         this._listeners.delete(cb);
     }
 
-    private _schedule() {
+    _schedule() {
         const usec = GLib.DateTime.new_now_local().get_microsecond();
         const delay = Math.max(1, Math.ceil((1_000_000 - usec) / 1000));
         this._id = GLib.timeout_add(GLib.PRIORITY_HIGH, delay, () => {

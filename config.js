@@ -1,18 +1,12 @@
 import Gio from 'gi://Gio';
 
-import type {IslandMetrics} from './island.js';
-import type {SpringParams} from './spring.js';
-import type {SideSlot} from './bridge.js';
-
 /** Typed read access to the extension's GSettings. */
 export class Config {
-    readonly settings: Gio.Settings;
-
-    constructor(settings: Gio.Settings) {
+    constructor(settings) {
         this.settings = settings;
     }
 
-    get metrics(): IslandMetrics {
+    get metrics() {
         const s = this.settings;
         return {
             topMargin: s.get_int('top-margin'),
@@ -24,7 +18,7 @@ export class Config {
         };
     }
 
-    get spring(): SpringParams {
+    get spring() {
         const s = this.settings;
         return {
             stiffness: s.get_double('spring-stiffness'),
@@ -45,12 +39,12 @@ export class Config {
         return this.settings.get_int('collapse-delay');
     }
 
-    get itemsLeft(): SideSlot[] {
-        return this.settings.get_strv('items-left') as SideSlot[];
+    get itemsLeft() {
+        return this.settings.get_strv('items-left');
     }
 
-    get itemsRight(): SideSlot[] {
-        return this.settings.get_strv('items-right') as SideSlot[];
+    get itemsRight() {
+        return this.settings.get_strv('items-right');
     }
 
     get blurTransitions() {

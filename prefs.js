@@ -7,7 +7,7 @@ import Gtk from 'gi://Gtk';
 
 import {ExtensionPreferences, gettext as _} from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
 
-const SLOT_LABELS: Record<string, () => string> = {
+const SLOT_LABELS = {
     'workspaces': () => _('Workspaces'),
     'clock': () => _('Clock and calendar'),
     'keyboard': () => _('Keyboard layout'),
@@ -15,7 +15,7 @@ const SLOT_LABELS: Record<string, () => string> = {
     'quick-settings': () => _('Quick Settings'),
 };
 
-const SLOT_ICONS: Record<string, string> = {
+const SLOT_ICONS = {
     'workspaces': 'view-grid-symbolic',
     'clock': 'x-office-calendar-symbolic',
     'keyboard': 'input-keyboard-symbolic',
@@ -23,22 +23,15 @@ const SLOT_ICONS: Record<string, string> = {
     'quick-settings': 'emblem-system-symbolic',
 };
 
-interface SpringPreset {
-    name: () => string;
-    stiffness: number;
-    damping: number;
-    mass: number;
-}
-
-const PRESETS: SpringPreset[] = [
+const PRESETS = [
     {name: () => _('Default'), stiffness: 320, damping: 26, mass: 1},
     {name: () => _('Bouncy'), stiffness: 420, damping: 18, mass: 1},
     {name: () => _('Snappy'), stiffness: 700, damping: 48, mass: 1},
     {name: () => _('Smooth'), stiffness: 160, damping: 26, mass: 1},
 ];
 
-function spinRow(settings: Gio.Settings, key: string, title: string, subtitle: string,
-    lower: number, upper: number, step: number, digits = 0): Adw.SpinRow {
+function spinRow(settings, key, title, subtitle,
+    lower, upper, step, digits = 0) {
     const row = new Adw.SpinRow({
         title,
         subtitle,
@@ -49,13 +42,13 @@ function spinRow(settings: Gio.Settings, key: string, title: string, subtitle: s
     return row;
 }
 
-function switchRow(settings: Gio.Settings, key: string, title: string, subtitle = ''): Adw.SwitchRow {
+function switchRow(settings, key, title, subtitle = '') {
     const row = new Adw.SwitchRow({title, subtitle});
     settings.bind(key, row, 'active', Gio.SettingsBindFlags.DEFAULT);
     return row;
 }
 
-function entryRow(settings: Gio.Settings, key: string, title: string): Adw.EntryRow {
+function entryRow(settings, key, title) {
     const row = new Adw.EntryRow({title, show_apply_button: true});
     row.text = settings.get_string(key);
     row.connect('apply', () => settings.set_string(key, row.text));
@@ -66,7 +59,7 @@ function entryRow(settings: Gio.Settings, key: string, title: string): Adw.Entry
     return row;
 }
 
-function colorRow(settings: Gio.Settings, key: string, title: string): Adw.ActionRow {
+function colorRow(settings, key, title) {
     const row = new Adw.ActionRow({title});
     const button = new Gtk.ColorDialogButton({
         dialog: new Gtk.ColorDialog({with_alpha: true}),
@@ -89,18 +82,17 @@ function colorRow(settings: Gio.Settings, key: string, title: string): Adw.Actio
     return row;
 }
 
-type Side = 'items-left' | 'items-right';
-const SIDES: Side[] = ['items-left', 'items-right'];
+const SIDES = ['items-left', 'items-right'];
 const SIDE_KEYS = Object.keys(SLOT_LABELS).filter(k => k !== 'clock');
 
 /**
  * Two reorderable lists (left and right of the always-centred clock).
  * Rows can be dragged within a list or onto the other one.
  */
-function sidesGroups(settings: Gio.Settings): Adw.PreferencesGroup[] {
-    const read = (): Record<Side, string[]> => {
-        const seen = new Set<string>();
-        const out = {} as Record<Side, string[]>;
+function sidesGroups(settings) {
+    const read = () => {
+        const seen = new Set();
+        const out = {};
         for (const side of SIDES) {
             out[side] = settings.get_strv(side).filter(k => SIDE_KEYS.includes(k) && !seen.has(k) && seen.add(k));
         }
@@ -112,7 +104,7 @@ function sidesGroups(settings: Gio.Settings): Adw.PreferencesGroup[] {
     };
 
     /** Moves `key` to `side` at `index` (end when index is -1). */
-    const move = (key: string, side: Side, index: number) => {
+    const move = (key, side, index) => {
         const lists = read();
         for (const s of SIDES) {
             const i = lists[s].indexOf(key);
@@ -130,17 +122,17 @@ function sidesGroups(settings: Gio.Settings): Adw.PreferencesGroup[] {
             settings.set_strv(s, lists[s]);
     };
 
-    const groups: Adw.PreferencesGroup[] = [];
-    const lists = new Map<Side, Gtk.ListBox>();
+    const groups = [];
+    const lists = new Map();
 
     const rebuild = () => {
         const data = read();
         for (const side of SIDES) {
-            const list = lists.get(side)!;
+            const list = lists.get(side);
             let child;
             while ((child = list.get_first_child()))
                 list.remove(child);
-            const other: Side = side === 'items-left' ? 'items-right' : 'items-left';
+            const other = side === 'items-left' ? 'items-right' : 'items-left';
 
             data[side].forEach((key, index) => {
                 const row = new Adw.ActionRow({title: SLOT_LABELS[key]()});
@@ -248,7 +240,7 @@ function sidesGroups(settings: Gio.Settings): Adw.PreferencesGroup[] {
 }
 
 export default class IslandPreferences extends ExtensionPreferences {
-    async fillPreferencesWindow(window: Adw.PreferencesWindow) {
+    async fillPreferencesWindow(window) {
         const settings = this.getSettings();
         window.set_default_size(640, 760);
         window.search_enabled = true;

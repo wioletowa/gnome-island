@@ -6,12 +6,10 @@ import Shell from 'gi://Shell';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as Volume from 'resource:///org/gnome/shell/ui/status/volume.js';
 
-export type PrivacyKind = 'screencast' | 'remote-recording' | 'sharing' | 'camera' | 'microphone';
-
 /** Highest priority first; the island shows the first active kind. */
-const PRIORITY: PrivacyKind[] = ['screencast', 'remote-recording', 'sharing', 'camera', 'microphone'];
+const PRIORITY = ['screencast', 'remote-recording', 'sharing', 'camera', 'microphone'];
 
-export const PRIVACY_ICONS: Record<PrivacyKind, string> = {
+export const PRIVACY_ICONS = {
     screencast: 'media-record-symbolic',
     'remote-recording': 'media-record-symbolic',
     sharing: 'screen-shared-symbolic',
@@ -33,25 +31,23 @@ const SKIPPED_AUDIO_APPS = [
 export const PrivacyMonitor = GObject.registerClass({
     Signals: {'changed': {}},
 }, class PrivacyMonitor extends GObject.Object {
-    private _active = new Map<PrivacyKind, number>();
-    private _cameraMonitor: any;
-    private _mixer: Gvc.MixerControl;
-    private _handles = new Set<any>();
-    private _micMuted = false;
+    _active = new Map();
+    _handles = new Set();
+    _micMuted = false;
 
     constructor() {
         super();
 
         Main.screenshotUI.connectObject('notify::screencast-in-progress', () =>
-            this._set('screencast', (Main.screenshotUI as any).screencast_in_progress), this);
-        this._set('screencast', (Main.screenshotUI as any).screencast_in_progress, false);
+            this._set('screencast', Main.screenshotUI.screencast_in_progress), this);
+        this._set('screencast', Main.screenshotUI.screencast_in_progress, false);
 
         // Screen sharing / remote recording through the portal. Handles that
         // already exist are only known to GNOME's own indicators.
-        const controller = (global.backend as any).get_remote_access_controller?.();
-        controller?.connectObject('new-handle', (_c: unknown, handle: any) =>
+        const controller = global.backend.get_remote_access_controller?.();
+        controller?.connectObject('new-handle', (_c, handle) =>
             this._addHandle(handle), this);
-        const statusArea = Main.panel.statusArea as any;
+        const statusArea = Main.panel.statusArea;
         const existing = [
             ...(statusArea.screenSharing?._handles ?? []),
             ...(statusArea.quickSettings?._remoteAccess?._handles ?? []),
@@ -60,7 +56,7 @@ export const PrivacyMonitor = GObject.registerClass({
             this._addHandle(handle, false);
         this._syncHandles(false);
 
-        this._cameraMonitor = new (Shell as any).CameraMonitor();
+        this._cameraMonitor = new Shell.CameraMonitor();
         this._cameraMonitor.connectObject('notify::cameras-in-use', () =>
             this._set('camera', !!this._cameraMonitor.cameras_in_use), this);
         this._set('camera', !!this._cameraMonitor.cameras_in_use, false);
@@ -74,7 +70,7 @@ export const PrivacyMonitor = GObject.registerClass({
         this._syncMicrophone(false);
     }
 
-    private _addHandle(handle: any, sync = true) {
+    _addHandle(handle, sync = true) {
         if (this._handles.has(handle))
             return;
         this._handles.add(handle);
@@ -86,7 +82,7 @@ export const PrivacyMonitor = GObject.registerClass({
             this._syncHandles();
     }
 
-    private _syncHandles(notify = true) {
+    _syncHandles(notify = true) {
         let sharing = 0;
         let recording = 0;
         for (const h of this._handles) {
@@ -97,13 +93,13 @@ export const PrivacyMonitor = GObject.registerClass({
         }
         // The screenshot UI's own screencast also shows up as a recording
         // handle; it is reported through screenshotUI instead.
-        if ((Main.screenshotUI as any).screencast_in_progress)
+        if (Main.screenshotUI.screencast_in_progress)
             recording = Math.max(0, recording - 1);
         this._set('sharing', sharing > 0, notify);
         this._set('remote-recording', recording > 0, notify);
     }
 
-    private _syncMicrophone(notify = true) {
+    _syncMicrophone(notify = true) {
         let active = false;
         try {
             active =
@@ -112,7 +108,7 @@ export const PrivacyMonitor = GObject.registerClass({
                     !SKIPPED_AUDIO_APPS.includes(o.get_application_id() ?? '') &&
                     !SKIPPED_AUDIO_APPS.includes(o.get_name() ?? ''));
         } catch (e) {
-            logError(e as object, 'gnome-island: microphone state');
+            logError(e, 'gnome-island: microphone state');
         }
         let muted = false;
         try {
@@ -129,7 +125,7 @@ export const PrivacyMonitor = GObject.registerClass({
         return this._micMuted;
     }
 
-    private _set(kind: PrivacyKind, on: boolean, notify = true) {
+    _set(kind, on, notify = true) {
         if (on === this._active.has(kind))
             return;
         if (on)
@@ -141,23 +137,23 @@ export const PrivacyMonitor = GObject.registerClass({
     }
 
     /** All active kinds, most important first. */
-    get kinds(): PrivacyKind[] {
+    get kinds() {
         return PRIORITY.filter(k => this._active.has(k));
     }
 
-    get kind(): PrivacyKind | null {
+    get kind() {
         return this.kinds[0] ?? null;
     }
 
     /** Start time (monotonic µs) of an active kind. */
-    sinceOf(kind: PrivacyKind): number {
+    sinceOf(kind) {
         return this._active.get(kind) ?? 0;
     }
 
     /** Stops what can be stopped from the island: screencasts and screen sharing. */
     stop() {
         if (this._active.has('screencast'))
-            (Main.screenshotUI as any).stopScreencast();
+            Main.screenshotUI.stopScreencast();
         for (const h of [...this._handles]) {
             if (!h.isRecording)
                 h.stop();
@@ -166,7 +162,7 @@ export const PrivacyMonitor = GObject.registerClass({
 
     destroy() {
         Main.screenshotUI.disconnectObject(this);
-        (global.backend as any).get_remote_access_controller?.()?.disconnectObject(this);
+        global.backend.get_remote_access_controller?.()?.disconnectObject(this);
         for (const h of this._handles)
             h.disconnectObject(this);
         this._handles.clear();
@@ -175,5 +171,3 @@ export const PrivacyMonitor = GObject.registerClass({
         this._mixer.disconnectObject(this);
     }
 });
-
-export type PrivacyMonitorType = InstanceType<typeof PrivacyMonitor>;

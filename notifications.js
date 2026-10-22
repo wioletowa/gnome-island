@@ -4,13 +4,6 @@ import GObject from 'gi://GObject';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as MessageTray from 'resource:///org/gnome/shell/ui/messageTray.js';
 
-export interface IslandNotification {
-    appName: string;
-    icon: Gio.Icon | null;
-    title: string;
-    urgency: number;
-}
-
 /**
  * Listens for notifications that would show a banner, re-emits them as
  * `notification` and (when `blockBanners` is set) keeps the stock banners
@@ -19,16 +12,16 @@ export interface IslandNotification {
 export const NotificationWatcher = GObject.registerClass({
     Signals: {'notification': {param_types: [GObject.TYPE_JSOBJECT]}},
 }, class NotificationWatcher extends GObject.Object {
-    private _sources = new Set<any>();
-    private _blockBanners = false;
-    private _externalBlocked = false;
+    _sources = new Set();
+    _blockBanners = false;
+    _externalBlocked = false;
 
     constructor() {
         super();
-        const tray = Main.messageTray as any;
+        const tray = Main.messageTray;
         tray.connectObject(
-            'source-added', (_t: unknown, source: any) => this._addSource(source),
-            'source-removed', (_t: unknown, source: any) => this._removeSource(source),
+            'source-added', (_t, source) => this._addSource(source),
+            'source-removed', (_t, source) => this._removeSource(source),
             this);
         for (const source of tray.getSources())
             this._addSource(source);
@@ -39,20 +32,20 @@ export const NotificationWatcher = GObject.registerClass({
         Object.defineProperty(tray, 'bannerBlocked', {
             configurable: true,
             get: () => this._externalBlocked,
-            set: (v: boolean) => {
+            set: (v) => {
                 this._externalBlocked = v;
                 this._applyBlock();
             },
         });
     }
 
-    set blockBanners(v: boolean) {
+    set blockBanners(v) {
         this._blockBanners = v;
         this._applyBlock();
     }
 
-    private _applyBlock() {
-        const tray = Main.messageTray as any;
+    _applyBlock() {
+        const tray = Main.messageTray;
         const blocked = this._externalBlocked || this._blockBanners;
         if (tray._bannerBlocked === blocked)
             return;
@@ -64,36 +57,36 @@ export const NotificationWatcher = GObject.registerClass({
         tray._updateState();
     }
 
-    private _addSource(source: any) {
+    _addSource(source) {
         if (this._sources.has(source))
             return;
         this._sources.add(source);
         source.connectObject('notification-request-banner',
-            (_s: unknown, n: any) => this._onBanner(n), this);
+            (_s, n) => this._onBanner(n), this);
     }
 
-    private _removeSource(source: any) {
+    _removeSource(source) {
         source.disconnectObject(this);
         this._sources.delete(source);
     }
 
-    private _onBanner(n: any) {
+    _onBanner(n) {
         // Same filtering as the message tray uses for banners.
         if (n.acknowledged || n.urgency === MessageTray.Urgency.LOW)
             return;
         if (!n.source.policy.showBanners && n.urgency !== MessageTray.Urgency.CRITICAL)
             return;
-        const tray = Main.messageTray as any;
+        const tray = Main.messageTray;
         if (tray._busy && n.urgency !== MessageTray.Urgency.CRITICAL && !n.forFeedback)
             return;
         // Drop it from the banner queue right away when we are replacing
         // banners; the tray handler runs after ours.
         if (this._blockBanners) {
-            const queue: any[] | undefined = tray._notificationQueue;
+            const queue = tray._notificationQueue;
             const later = () => {
                 const i = queue?.indexOf(n) ?? -1;
                 if (i >= 0) {
-                    queue!.splice(i, 1);
+                    queue.splice(i, 1);
                     // GNOME's unread dot subtracts queued banners; let it recount.
                     tray.emit('queue-changed');
                 }
@@ -105,11 +98,11 @@ export const NotificationWatcher = GObject.registerClass({
             icon: n.source.icon ?? n.gicon ?? null,
             title: n.title ?? '',
             urgency: n.urgency,
-        } as IslandNotification);
+        });
     }
 
     destroy() {
-        const tray = Main.messageTray as any;
+        const tray = Main.messageTray;
         tray.disconnectObject(this);
         for (const s of this._sources)
             s.disconnectObject(this);
@@ -121,5 +114,3 @@ export const NotificationWatcher = GObject.registerClass({
         tray.bannerBlocked = this._externalBlocked;
     }
 });
-
-export type NotificationWatcherType = InstanceType<typeof NotificationWatcher>;

@@ -1,12 +1,6 @@
 import Clutter from 'gi://Clutter';
 
-export interface SpringParams {
-    stiffness: number;
-    damping: number;
-    mass: number;
-}
-
-export const DEFAULT_SPRING: SpringParams = {stiffness: 320, damping: 26, mass: 1};
+export const DEFAULT_SPRING = {stiffness: 320, damping: 26, mass: 1};
 
 const REST_VELOCITY = 0.5;
 const REST_DISTANCE = 0.05;
@@ -18,18 +12,15 @@ const MAX_STEP = 1 / 480;
  * an animation can be interrupted mid-flight without a visible jump.
  */
 export class Spring {
-    value: number;
     velocity = 0;
-    target: number;
-    params: SpringParams;
 
-    constructor(value: number, params: SpringParams = DEFAULT_SPRING) {
+    constructor(value, params = DEFAULT_SPRING) {
         this.value = value;
         this.target = value;
         this.params = params;
     }
 
-    get settled(): boolean {
+    get settled() {
         return Math.abs(this.velocity) < REST_VELOCITY &&
             Math.abs(this.target - this.value) < REST_DISTANCE;
     }
@@ -40,7 +31,7 @@ export class Spring {
         this.velocity = 0;
     }
 
-    step(dt: number) {
+    step(dt) {
         if (this.settled) {
             this.value = this.target;
             this.velocity = 0;
@@ -63,26 +54,24 @@ export class Spring {
  * `onFrame` after each step. Stops itself once everything is at rest.
  */
 export class SpringDriver {
-    private _timeline: Clutter.Timeline;
-    private _springs = new Set<Spring>();
-    private _onFrame: () => void;
+    _springs = new Set();
 
-    constructor(actor: Clutter.Actor, onFrame: () => void) {
+    constructor(actor, onFrame) {
         this._onFrame = onFrame;
         this._timeline = new Clutter.Timeline({actor, duration: 1000, repeat_count: -1});
         this._timeline.connect('new-frame', () => this._tick());
     }
 
-    add(spring: Spring): Spring {
+    add(spring) {
         this._springs.add(spring);
         return spring;
     }
 
-    remove(spring: Spring) {
+    remove(spring) {
         this._springs.delete(spring);
     }
 
-    setParams(params: SpringParams) {
+    setParams(params) {
         for (const s of this._springs)
             s.params = params;
     }
@@ -93,7 +82,7 @@ export class SpringDriver {
             this._timeline.start();
     }
 
-    private _tick() {
+    _tick() {
         // Clamp so a stalled frame (e.g. after a VT switch) does not explode.
         const dt = Math.min(this._timeline.get_delta() / 1000, 1 / 20);
         for (const s of this._springs)

@@ -5,10 +5,10 @@ import GObject from 'gi://GObject';
 import Pango from 'gi://Pango';
 import St from 'gi://St';
 
-import {Odometer, OdometerType} from './odometer.js';
+import {Odometer} from './odometer.js';
 import {SymmetricBox} from './symmetric.js';
-import {VisualizerBars, VisualizerBarsType} from './visualizer.js';
-import {PRIVACY_ICONS, PrivacyKind} from './privacy.js';
+import {VisualizerBars} from './visualizer.js';
+import {PRIVACY_ICONS} from './privacy.js';
 
 const COVER_SIZE = 22;
 
@@ -19,9 +19,6 @@ const COVER_SIZE = 22;
  */
 export const ClockWidget = GObject.registerClass(
 class ClockWidget extends SymmetricBox {
-    time: OdometerType;
-    date: St.Label;
-
     constructor() {
         super({style_class: 'island-clock'});
         this.time = new Odometer({style_class: 'island-odometer island-time'});
@@ -30,14 +27,14 @@ class ClockWidget extends SymmetricBox {
         this.left.add_child(this.date);
     }
 
-    setDate(text: string | null) {
+    setDate(text) {
         this.date.visible = !!text;
         if (text)
             this.date.text = text;
     }
 
     /** Puts an indicator actor (GNOME's own dot, or a mirror of it) on the right. */
-    setIndicator(actor: Clutter.Actor | null) {
+    setIndicator(actor) {
         for (const child of this.right.get_children())
             this.right.remove_child(child);
         if (actor)
@@ -45,15 +42,13 @@ class ClockWidget extends SymmetricBox {
     }
 });
 
-export type ClockWidgetType = InstanceType<typeof ClockWidget>;
-
 /**
  * A copy of GNOME's unread-messages dot that follows the real one's
  * visibility and icon, for the collapsed island.
  */
 export const MessagesDotMirror = GObject.registerClass(
 class MessagesDotMirror extends St.Icon {
-    constructor(source: St.Icon | null) {
+    constructor(source) {
         super({
             style_class: 'messages-indicator island-messages-dot',
             icon_name: 'message-indicator-symbolic',
@@ -70,8 +65,7 @@ class MessagesDotMirror extends St.Icon {
 /** Cover art thumbnail with rounded corners; falls back to a note icon. */
 export const CoverArt = GObject.registerClass(
 class CoverArt extends St.Bin {
-    private _uri: string | null = null;
-    private _fallback: St.Icon;
+    _uri = null;
 
     constructor() {
         super({
@@ -89,7 +83,7 @@ class CoverArt extends St.Bin {
         this.set_child(this._fallback);
     }
 
-    setUri(uri: string | null) {
+    setUri(uri) {
         if (uri === this._uri)
             return;
         this._uri = uri;
@@ -104,16 +98,10 @@ class CoverArt extends St.Bin {
     }
 });
 
-export type CoverArtType = InstanceType<typeof CoverArt>;
-
 /** Collapsed media: cover at the left edge, clock centred, visualizer at the right edge. */
 export const MediaView = GObject.registerClass(
 class MediaView extends SymmetricBox {
-    cover: CoverArtType;
-    clock: ClockWidgetType;
-    bars: VisualizerBarsType;
-
-    constructor(barCount: number) {
+    constructor(barCount) {
         super({style_class: 'island-view island-media-view', hugEdges: true});
         this.cover = new CoverArt();
         this.clock = new ClockWidget();
@@ -124,9 +112,7 @@ class MediaView extends SymmetricBox {
     }
 });
 
-export type MediaViewType = InstanceType<typeof MediaView>;
-
-export function formatElapsed(us: number): string {
+export function formatElapsed(us) {
     const total = Math.max(0, Math.floor(us / 1_000_000));
     const h = Math.floor(total / 3600);
     const m = Math.floor((total % 3600) / 60);
@@ -136,13 +122,7 @@ export function formatElapsed(us: number): string {
 }
 
 /** Kinds that show an elapsed timer. */
-const TIMED_KINDS: PrivacyKind[] = ['screencast', 'remote-recording', 'sharing'];
-
-export interface PrivacyState {
-    kinds: PrivacyKind[];
-    sinceOf(kind: PrivacyKind): number;
-    microphoneMuted: boolean;
-}
+const TIMED_KINDS = ['screencast', 'remote-recording', 'sharing'];
 
 /**
  * Every active privacy activity in the side bubble: one icon per kind
@@ -150,9 +130,7 @@ export interface PrivacyState {
  */
 export const BubbleView = GObject.registerClass(
 class BubbleView extends St.BoxLayout {
-    private _icons = new Map<PrivacyKind, St.Icon>();
-    private _iconBox: St.BoxLayout;
-    timer: OdometerType;
+    _icons = new Map();
 
     constructor() {
         super({style_class: 'island-view island-bubble-view', y_align: Clutter.ActorAlign.CENTER});
@@ -162,7 +140,7 @@ class BubbleView extends St.BoxLayout {
         this.add_child(this.timer);
     }
 
-    update(state: PrivacyState | null) {
+    update(state) {
         const kinds = state?.kinds ?? [];
         for (const [kind, icon] of this._icons) {
             if (!kinds.includes(kind)) {
@@ -192,7 +170,7 @@ class BubbleView extends St.BoxLayout {
                 }
             }
             this._iconBox.set_child_at_index(icon, index);
-            const muted = kind === 'microphone' && state!.microphoneMuted;
+            const muted = kind === 'microphone' && state.microphoneMuted;
             icon.icon_name = muted ? 'microphone-sensitivity-muted-symbolic' : PRIVACY_ICONS[kind];
             if (muted)
                 icon.add_style_class_name('island-privacy-muted');
@@ -203,7 +181,7 @@ class BubbleView extends St.BoxLayout {
         const timed = kinds.find(k => TIMED_KINDS.includes(k));
         this.timer.visible = !!timed;
         if (timed) {
-            this.timer.setText(formatElapsed(GLib.get_monotonic_time() - state!.sinceOf(timed)));
+            this.timer.setText(formatElapsed(GLib.get_monotonic_time() - state.sinceOf(timed)));
             // Colour the timer like the activity it times.
             for (const k of TIMED_KINDS)
                 this.timer.remove_style_class_name(`island-privacy-${k}`);
@@ -212,15 +190,9 @@ class BubbleView extends St.BoxLayout {
     }
 });
 
-export type BubbleViewType = InstanceType<typeof BubbleView>;
-
 /** Incoming notification: app icon at the left edge, name centred, a pulsing dot at the right. */
 export const NotificationView = GObject.registerClass(
 class NotificationView extends SymmetricBox {
-    private _icon: St.Icon;
-    private _label: St.Label;
-    private _dot: St.Widget;
-
     constructor() {
         super({style_class: 'island-view island-notification-view', hugEdges: true});
         this._icon = new St.Icon({style_class: 'island-notification-icon', icon_size: 20, y_align: Clutter.ActorAlign.CENTER});
@@ -234,11 +206,11 @@ class NotificationView extends SymmetricBox {
         this.right.add_child(this._dot);
     }
 
-    setAccent(color: string) {
+    setAccent(color) {
         this._dot.set_style(`background-color: ${color};`);
     }
 
-    show_(appName: string, icon: Gio.Icon | null) {
+    show_(appName, icon) {
         this._icon.gicon = icon ?? new Gio.ThemedIcon({name: 'preferences-system-notifications-symbolic'});
         this._label.text = appName;
         // A small pop on arrival.
@@ -268,8 +240,6 @@ class NotificationView extends SymmetricBox {
     }
 });
 
-export type NotificationViewType = InstanceType<typeof NotificationView>;
-
 const LEVEL_WIDTH = 64;
 
 /**
@@ -278,11 +248,6 @@ const LEVEL_WIDTH = 64;
  */
 export const OsdView = GObject.registerClass(
 class OsdView extends St.BoxLayout {
-    private _icon: St.Icon;
-    private _track: St.Widget;
-    private _fill: St.Widget;
-    private _over: St.Widget;
-
     constructor() {
         super({style_class: 'island-view island-osd-view', y_align: Clutter.ActorAlign.CENTER});
         this._icon = new St.Icon({style_class: 'island-osd-icon', icon_size: 16, y_align: Clutter.ActorAlign.CENTER});
@@ -305,11 +270,11 @@ class OsdView extends St.BoxLayout {
         });
     }
 
-    setAccent(color: string) {
+    setAccent(color) {
         this._over.set_style(`background-color: ${color};`);
     }
 
-    show_(icon: Gio.Icon | null, level: number | null | undefined, maxLevel: number | null | undefined) {
+    show_(icon, level, maxLevel) {
         this._icon.gicon = icon;
         const hasLevel = typeof level === 'number' && level >= 0;
         this._track.visible = hasLevel;
@@ -322,7 +287,7 @@ class OsdView extends St.BoxLayout {
         const fillW = Math.round(LEVEL_WIDTH * Math.min(frac, normal));
         const overW = Math.round(LEVEL_WIDTH * Math.max(0, frac - normal));
         const animate = this.mapped;
-        const ease = (actor: St.Widget, props: {width: number, x?: number}) => {
+        const ease = (actor, props) => {
             actor.remove_all_transitions();
             if (!animate) {
                 actor.set(props);
@@ -336,22 +301,20 @@ class OsdView extends St.BoxLayout {
     }
 });
 
-export type OsdViewType = InstanceType<typeof OsdView>;
-
 const DOT = 7;
 const ACTIVE_DOT = 22;
 
 /** Workspace switch feedback: dots with the active one stretched, like GNOME's top bar. */
 export const WorkspaceDots = GObject.registerClass(
 class WorkspaceDots extends St.BoxLayout {
-    private _dots: St.Widget[] = [];
-    private _active = -1;
+    _dots = [];
+    _active = -1;
 
     constructor() {
         super({style_class: 'island-view island-workspace-dots', y_align: Clutter.ActorAlign.CENTER});
     }
 
-    show_(active: number, count: number) {
+    show_(active, count) {
         const animate = this.mapped && this._dots.length === count;
         if (this._dots.length !== count) {
             for (const d of this._dots)
@@ -386,5 +349,3 @@ class WorkspaceDots extends St.BoxLayout {
         });
     }
 });
-
-export type WorkspaceDotsType = InstanceType<typeof WorkspaceDots>;

@@ -7,37 +7,17 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as WorkspaceSwitcherPopup from 'resource:///org/gnome/shell/ui/workspaceSwitcherPopup.js';
 
 import {Config} from './config.js';
-import {Island, IslandType} from './island.js';
-import {ExpandedRow, ExpandedRowType, PanelBridge} from './bridge.js';
+import {Island} from './island.js';
+import {ExpandedRow, PanelBridge} from './bridge.js';
 import {SecondTicker} from './odometer.js';
-import {MediaWatcher, MediaWatcherType} from './media.js';
-import {SpectrumAnalyzer} from './visualizer.js';
-import {PrivacyMonitor, PrivacyMonitorType} from './privacy.js';
-import {IslandNotification, NotificationWatcher, NotificationWatcherType} from './notifications.js';
+import {MediaWatcher} from './media.js';
+import {PrivacyMonitor} from './privacy.js';
+import {NotificationWatcher} from './notifications.js';
 import {
-    BubbleView, BubbleViewType, ClockWidget, ClockWidgetType, CoverArt, CoverArtType,
-    MediaView, MediaViewType, MessagesDotMirror, NotificationView, NotificationViewType,
-    OsdView, OsdViewType, WorkspaceDots, WorkspaceDotsType,
+    BubbleView, ClockWidget, CoverArt, MediaView, MessagesDotMirror,
+    NotificationView, OsdView, WorkspaceDots,
 } from './views.js';
-import {VisualizerBars, VisualizerBarsType} from './visualizer.js';
-
-interface IslandHost {
-    island: IslandType;
-    row: ExpandedRowType;
-    /** Media cover and visualizer at the outer ends of the expanded row. */
-    rowCover: CoverArtType;
-    rowBars: VisualizerBarsType;
-    clock: ClockWidgetType;
-    media: MediaViewType;
-    notification: NotificationViewType;
-    bubble: BubbleViewType;
-    osd: OsdViewType;
-    osdTimeoutId: number;
-    workspaces: WorkspaceDotsType;
-    /** Own chrome container for non-primary monitors; null on primary. */
-    container: St.Widget | null;
-    monitorIndex: number;
-}
+import {SpectrumAnalyzer, VisualizerBars} from './visualizer.js';
 
 /** Same as GNOME's OSD hide timeout. */
 const OSD_TIMEOUT = 1500;
@@ -48,31 +28,31 @@ const WORKSPACE_TIMEOUT = 1000;
 const NOTIFICATION_MAX_WAIT_US = 10_000_000;
 
 export default class IslandExtension extends Extension {
-    private _config: Config | null = null;
-    private _bridge: PanelBridge | null = null;
-    private _ticker: SecondTicker | null = null;
-    private _media: MediaWatcherType | null = null;
-    private _analyzer: SpectrumAnalyzer | null = null;
-    private _privacy: PrivacyMonitorType | null = null;
-    private _notifications: NotificationWatcherType | null = null;
-    private _hosts: IslandHost[] = [];
-    private _expanded: IslandHost | null = null;
-    private _expandedClock: ClockWidgetType | null = null;
-    private _collapseId = 0;
-    private _tickCb: ((now: GLib.DateTime) => void) | null = null;
-    private _levelsCb: ((levels: number[]) => void) | null = null;
-    private _origToggleCalendar: (() => void) | null = null;
-    private _origToggleQuickSettings: (() => void) | null = null;
+    _config = null;
+    _bridge = null;
+    _ticker = null;
+    _media = null;
+    _analyzer = null;
+    _privacy = null;
+    _notifications = null;
+    _hosts = [];
+    _expanded = null;
+    _expandedClock = null;
+    _collapseId = 0;
+    _tickCb = null;
+    _levelsCb = null;
+    _origToggleCalendar = null;
+    _origToggleQuickSettings = null;
 
-    private _pausedSince = 0;
-    private _pausedTimeoutId = 0;
-    private _notifQueue: [IslandNotification, number][] = [];
-    private _notifActive = false;
-    private _notifTimeoutId = 0;
-    private _wsActive = false;
-    private _wsTimeoutId = 0;
-    private _origShowOsd: ((...args: any[]) => void) | null = null;
-    private _origWsDisplay: ((index: number) => void) | null = null;
+    _pausedSince = 0;
+    _pausedTimeoutId = 0;
+    _notifQueue = [];
+    _notifActive = false;
+    _notifTimeoutId = 0;
+    _wsActive = false;
+    _wsTimeoutId = 0;
+    _origShowOsd = null;
+    _origWsDisplay = null;
 
     enable() {
         this._config = new Config(this.getSettings());
@@ -102,7 +82,7 @@ export default class IslandExtension extends Extension {
         this._privacy.connect('changed', () => this._updateViews());
         this._notifications = new NotificationWatcher();
         this._notifications.blockBanners = this._config.notificationsInIsland;
-        this._notifications.connect('notification', (_w, n: IslandNotification) =>
+        this._notifications.connect('notification', (_w, n) =>
             this._onNotification(n));
 
         this._tickCb = now => this._onTick(now);
@@ -115,9 +95,9 @@ export default class IslandExtension extends Extension {
             () => this._onWorkspaceChanged(), this);
 
         Main.layoutManager.connectObject('monitors-changed', () => this._buildHosts(), this);
-        global.stage.connectObject('captured-event', (_s: Clutter.Actor, e: Clutter.Event) =>
+        global.stage.connectObject('captured-event', (_s, e) =>
             this._onCapturedEvent(e), this);
-        this._config.settings.connectObject('changed', (_s: unknown, key: string) =>
+        this._config.settings.connectObject('changed', (_s, key) =>
             this._onSettingChanged(key), this);
 
         this._updateViews();
@@ -173,8 +153,8 @@ export default class IslandExtension extends Extension {
 
     // --- Hosts (one island per monitor) ---------------------------------
 
-    private _buildHosts() {
-        const config = this._config!;
+    _buildHosts() {
+        const config = this._config;
         const expandedMonitor = this._expanded?.monitorIndex ?? null;
         this._expanded = null;
         // Hand indicators back to the panel while the islands are rebuilt.
@@ -222,12 +202,12 @@ export default class IslandExtension extends Extension {
         }
     }
 
-    private _createHost(monitorIndex: number): IslandHost {
-        const config = this._config!;
+    _createHost(monitorIndex) {
+        const config = this._config;
         const island = new Island(config.metrics, config.spring);
         island.setBlurEnabled(config.blurTransitions);
 
-        const dot = this._bridge!.messagesDot;
+        const dot = this._bridge.messagesDot;
         const clock = new ClockWidget();
         clock.setIndicator(new MessagesDotMirror(dot));
         island.addView('clock', clock);
@@ -257,14 +237,14 @@ export default class IslandExtension extends Extension {
         const osd = new OsdView();
         island.addView('osd', osd, {bubble: 'left'});
 
-        const host: IslandHost = {
+        const host = {
             island, row, rowCover, rowBars, clock, media, notification, bubble,
             osd, osdTimeoutId: 0, workspaces, container: null, monitorIndex,
         };
         this._applyColors(host);
 
-        island.connect('pill-clicked', (_i, button: number) => this._onPillClicked(host, button));
-        island.connect('bubble-clicked', (_i, side: string) => {
+        island.connect('pill-clicked', (_i, button) => this._onPillClicked(host, button));
+        island.connect('bubble-clicked', (_i, side) => {
             if (side === 'right')
                 this._onBubbleClicked(host);
         });
@@ -273,13 +253,13 @@ export default class IslandExtension extends Extension {
                 GLib.source_remove(host.osdTimeoutId);
             host.osdTimeoutId = 0;
         });
-        island.connect('hover-changed', (_i, hovered: boolean) => this._onHoverChanged(host, hovered));
+        island.connect('hover-changed', (_i, hovered) => this._onHoverChanged(host, hovered));
         island.connect('key-escape', () => this._collapse());
         island.pill.connect('key-focus-out', () => this._onKeyFocusOut(host));
         return host;
     }
 
-    private _destroyHosts() {
+    _destroyHosts() {
         for (const host of this._hosts) {
             if (host.container)
                 host.container.destroy();
@@ -289,13 +269,13 @@ export default class IslandExtension extends Extension {
         this._hosts = [];
     }
 
-    private _primaryHost(): IslandHost | undefined {
+    _primaryHost() {
         return this._hosts.find(h => h.monitorIndex === Main.layoutManager.primaryIndex) ??
             this._hosts[0];
     }
 
-    private _applyColors(host: IslandHost) {
-        const {background, foreground, accent} = this._config!.colors;
+    _applyColors(host) {
+        const {background, foreground, accent} = this._config.colors;
         const style = `background-color: ${background}; color: ${foreground};`;
         for (const capsule of host.island.capsules)
             capsule.set_style(style);
@@ -307,7 +287,7 @@ export default class IslandExtension extends Extension {
 
     // --- State → views -----------------------------------------------------
 
-    private _mediaVisible(): boolean {
+    _mediaVisible() {
         const state = this._media?.state;
         if (!state) {
             this._pausedSince = 0;
@@ -318,7 +298,7 @@ export default class IslandExtension extends Extension {
             return true;
         }
         // Keep a paused player around for a while, then fall back to the clock.
-        const timeout = this._config!.pausedMediaTimeout;
+        const timeout = this._config.pausedMediaTimeout;
         const now = GLib.get_monotonic_time();
         if (!this._pausedSince) {
             this._pausedSince = now;
@@ -333,7 +313,7 @@ export default class IslandExtension extends Extension {
         return now - this._pausedSince < timeout * 1000;
     }
 
-    private _updateViews() {
+    _updateViews() {
         if (!this._config)
             return;
         const state = this._media?.state ?? null;
@@ -374,8 +354,8 @@ export default class IslandExtension extends Extension {
 
     // --- Clock -------------------------------------------------------------
 
-    private _onTick(now: GLib.DateTime) {
-        const config = this._config!;
+    _onTick(now) {
+        const config = this._config;
         const time = now.format(config.clockFormat) ?? '';
         for (const host of this._hosts) {
             host.clock.time.setText(time);
@@ -390,14 +370,14 @@ export default class IslandExtension extends Extension {
 
     // --- Notifications -----------------------------------------------------
 
-    private _onNotification(n: IslandNotification) {
-        if (!this._config!.notificationsInIsland)
+    _onNotification(n) {
+        if (!this._config.notificationsInIsland)
             return;
         this._notifQueue.push([n, GLib.get_monotonic_time()]);
         this._showNextNotification();
     }
 
-    private _showNextNotification() {
+    _showNextNotification() {
         if (this._notifActive || this._expanded)
             return;
         const now = GLib.get_monotonic_time();
@@ -411,14 +391,14 @@ export default class IslandExtension extends Extension {
         this._notifActive = true;
         this._updateViews();
         this._notifTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT,
-            this._config!.notificationDuration, () => {
+            this._config.notificationDuration, () => {
                 this._notifTimeoutId = 0;
                 this._endNotification();
                 return GLib.SOURCE_REMOVE;
             });
     }
 
-    private _endNotification() {
+    _endNotification() {
         if (this._notifTimeoutId)
             GLib.source_remove(this._notifTimeoutId);
         this._notifTimeoutId = 0;
@@ -440,7 +420,7 @@ export default class IslandExtension extends Extension {
 
     // --- Expand / collapse -------------------------------------------------
 
-    private _onPillClicked(host: IslandHost, button: number) {
+    _onPillClicked(host, button) {
         if (button !== Clutter.BUTTON_PRIMARY && button !== Clutter.BUTTON_SECONDARY)
             return;
         if (this._expanded === host)
@@ -455,17 +435,17 @@ export default class IslandExtension extends Extension {
         this._expand(host);
     }
 
-    private _onBubbleClicked(host: IslandHost) {
+    _onBubbleClicked(host) {
         if (this._privacy?.kind === 'screencast')
             this._privacy.stop();
         else
             this._expand(host);
     }
 
-    private _expand(host: IslandHost) {
+    _expand(host) {
         const previous = this._expanded;
         this._expanded = host;
-        this._bridge!.attach(host.row);
+        this._bridge.attach(host.row);
         if (previous && previous !== host)
             this._updateViews();
         host.island.setView('expanded');
@@ -476,12 +456,12 @@ export default class IslandExtension extends Extension {
             this._scheduleCollapse();
     }
 
-    private _collapse() {
+    _collapse() {
         this._cancelCollapse();
         const host = this._expanded;
         if (!host)
             return;
-        const menu = (Main.panel.menuManager as any).activeMenu;
+        const menu = Main.panel.menuManager.activeMenu;
         if (menu)
             menu.close();
         this._expanded = null;
@@ -491,14 +471,14 @@ export default class IslandExtension extends Extension {
         this._showNextNotification();
     }
 
-    private _scheduleCollapse() {
+    _scheduleCollapse() {
         this._cancelCollapse();
-        this._collapseId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, this._config!.collapseDelay, () => {
+        this._collapseId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, this._config.collapseDelay, () => {
             this._collapseId = 0;
             const host = this._expanded;
             if (!host)
                 return GLib.SOURCE_REMOVE;
-            if ((Main.panel.menuManager as any).activeMenu || host.island.hovered) {
+            if (Main.panel.menuManager.activeMenu || host.island.hovered) {
                 // A menu is open or the pointer came back; check again later.
                 this._scheduleCollapse();
                 return GLib.SOURCE_REMOVE;
@@ -508,13 +488,13 @@ export default class IslandExtension extends Extension {
         });
     }
 
-    private _cancelCollapse() {
+    _cancelCollapse() {
         if (this._collapseId)
             GLib.source_remove(this._collapseId);
         this._collapseId = 0;
     }
 
-    private _onHoverChanged(host: IslandHost, hovered: boolean) {
+    _onHoverChanged(host, hovered) {
         if (this._expanded !== host)
             return;
         if (hovered)
@@ -523,7 +503,7 @@ export default class IslandExtension extends Extension {
             this._scheduleCollapse();
     }
 
-    private _onKeyFocusOut(host: IslandHost) {
+    _onKeyFocusOut(host) {
         if (this._expanded !== host)
             return;
         // With focus-follows-mouse a window takes focus as soon as the
@@ -541,14 +521,14 @@ export default class IslandExtension extends Extension {
         });
     }
 
-    private _onCapturedEvent(event: Clutter.Event) {
+    _onCapturedEvent(event) {
         const host = this._expanded;
         if (!host)
             return Clutter.EVENT_PROPAGATE;
         const type = event.type();
         if (type !== Clutter.EventType.BUTTON_PRESS && type !== Clutter.EventType.TOUCH_BEGIN)
             return Clutter.EVENT_PROPAGATE;
-        if ((Main.panel.menuManager as any).activeMenu)
+        if (Main.panel.menuManager.activeMenu)
             return Clutter.EVENT_PROPAGATE;
         const target = global.stage.get_event_actor(event);
         if (target && host.island.contains(target))
@@ -559,28 +539,28 @@ export default class IslandExtension extends Extension {
 
     // --- OSD (volume, brightness, microphone…) ------------------------------
 
-    private _patchOsd() {
-        const mgr = Main.osdWindowManager as any;
+    _patchOsd() {
+        const mgr = Main.osdWindowManager;
         this._origShowOsd = mgr._showOsdWindow;
         // Every OSD (showOne/showAll/D-Bus) ends up here, per monitor.
-        mgr._showOsdWindow = (monitorIndex: number, icon: any, label: string | null,
-            level?: number | null, maxLevel?: number | null) => {
+        mgr._showOsdWindow = (monitorIndex, icon, label,
+            level, maxLevel) => {
             const host = this._hosts.find(h => h.monitorIndex === monitorIndex);
             if (!host) {
-                this._origShowOsd!.call(mgr, monitorIndex, icon, label, level, maxLevel);
+                this._origShowOsd.call(mgr, monitorIndex, icon, label, level, maxLevel);
                 return;
             }
             this._showOsd(host, icon, level, maxLevel);
         };
     }
 
-    private _unpatchOsd() {
+    _unpatchOsd() {
         if (this._origShowOsd)
-            (Main.osdWindowManager as any)._showOsdWindow = this._origShowOsd;
+            Main.osdWindowManager._showOsdWindow = this._origShowOsd;
         this._origShowOsd = null;
     }
 
-    private _showOsd(host: IslandHost, icon: any, level?: number | null, maxLevel?: number | null) {
+    _showOsd(host, icon, level, maxLevel) {
         host.osd.show_(icon, level, maxLevel);
         host.island.setBubbleView('left', 'osd');
         if (host.osdTimeoutId)
@@ -594,12 +574,12 @@ export default class IslandExtension extends Extension {
 
     // --- Workspace switching ---------------------------------------------
 
-    private _patchWorkspacePopup() {
-        const proto = WorkspaceSwitcherPopup.WorkspaceSwitcherPopup.prototype as any;
+    _patchWorkspacePopup() {
+        const proto = WorkspaceSwitcherPopup.WorkspaceSwitcherPopup.prototype;
         this._origWsDisplay = proto.display;
         // Keep the popup's lifetime (the window manager waits for it to be
         // destroyed) but never show it; the island shows the switch instead.
-        proto.display = function (this: any, index: number) {
+        proto.display = function (index) {
             this._activeWorkspaceIndex = index;
             if (this._timeoutId)
                 GLib.source_remove(this._timeoutId);
@@ -611,13 +591,13 @@ export default class IslandExtension extends Extension {
         };
     }
 
-    private _unpatchWorkspacePopup() {
+    _unpatchWorkspacePopup() {
         if (this._origWsDisplay)
-            (WorkspaceSwitcherPopup.WorkspaceSwitcherPopup.prototype as any).display = this._origWsDisplay;
+            WorkspaceSwitcherPopup.WorkspaceSwitcherPopup.prototype.display = this._origWsDisplay;
         this._origWsDisplay = null;
     }
 
-    private _onWorkspaceChanged() {
+    _onWorkspaceChanged() {
         if (Main.overview.visible)
             return;
         const wm = global.workspace_manager;
@@ -638,24 +618,24 @@ export default class IslandExtension extends Extension {
 
     // --- Panel API patches -------------------------------------------------
 
-    private _patchPanel() {
-        const panel = Main.panel as any;
+    _patchPanel() {
+        const panel = Main.panel;
         this._origToggleCalendar = panel.toggleCalendar;
         this._origToggleQuickSettings = panel.toggleQuickSettings;
         // Keyboard shortcuts (Super+V, Super+S) need the indicator mapped,
         // so expand an island first.
         panel.toggleCalendar = () => {
             this._expandForMenu();
-            this._origToggleCalendar!.call(panel);
+            this._origToggleCalendar.call(panel);
         };
         panel.toggleQuickSettings = () => {
             this._expandForMenu();
-            this._origToggleQuickSettings!.call(panel);
+            this._origToggleQuickSettings.call(panel);
         };
     }
 
-    private _unpatchPanel() {
-        const panel = Main.panel as any;
+    _unpatchPanel() {
+        const panel = Main.panel;
         if (this._origToggleCalendar)
             panel.toggleCalendar = this._origToggleCalendar;
         if (this._origToggleQuickSettings)
@@ -664,7 +644,7 @@ export default class IslandExtension extends Extension {
         this._origToggleQuickSettings = null;
     }
 
-    private _expandForMenu() {
+    _expandForMenu() {
         const host = this._expanded ?? this._primaryHost();
         if (host && this._expanded !== host)
             this._expand(host);
@@ -672,8 +652,8 @@ export default class IslandExtension extends Extension {
 
     // --- Settings ----------------------------------------------------------
 
-    private _onSettingChanged(key: string) {
-        const config = this._config!;
+    _onSettingChanged(key) {
+        const config = this._config;
         switch (key) {
         case 'all-monitors':
             this._buildHosts();
@@ -717,7 +697,7 @@ export default class IslandExtension extends Extension {
             }
             break;
         case 'notifications-in-island':
-            this._notifications!.blockBanners = config.notificationsInIsland;
+            this._notifications.blockBanners = config.notificationsInIsland;
             break;
         case 'paused-media-timeout':
             this._pausedSince = 0;

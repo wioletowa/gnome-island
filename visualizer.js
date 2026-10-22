@@ -8,9 +8,9 @@ const INTERVAL_NS = 30_000_000;
 // Ignore the very top of the spectrum, which carries little musical energy.
 const MAX_BAND_FRACTION = 0.6;
 
-let Gst: any = null;
+let Gst = null;
 
-async function loadGst(): Promise<any> {
+async function loadGst() {
     if (Gst)
         return Gst;
     try {
@@ -18,7 +18,7 @@ async function loadGst(): Promise<any> {
         if (!Gst.is_initialized())
             Gst.init(null);
     } catch (e) {
-        logError(e as object, 'gnome-island: GStreamer unavailable, visualizer disabled');
+        logError(e, 'gnome-island: GStreamer unavailable, visualizer disabled');
         Gst = null;
     }
     return Gst;
@@ -30,24 +30,24 @@ async function loadGst(): Promise<any> {
  * costs nothing when nothing is playing.
  */
 export class SpectrumAnalyzer {
-    private _pipeline: any = null;
-    private _busId = 0;
-    private _listeners = new Set<(levels: number[]) => void>();
-    private _bars = 5;
-    private _sensitivity = 1;
-    private _wanted = false;
-    private _destroyed = false;
+    _pipeline = null;
+    _busId = 0;
+    _listeners = new Set();
+    _bars = 5;
+    _sensitivity = 1;
+    _wanted = false;
+    _destroyed = false;
 
-    configure(bars: number, sensitivity: number) {
+    configure(bars, sensitivity) {
         this._bars = bars;
         this._sensitivity = sensitivity;
     }
 
-    addListener(cb: (levels: number[]) => void) {
+    addListener(cb) {
         this._listeners.add(cb);
     }
 
-    removeListener(cb: (levels: number[]) => void) {
+    removeListener(cb) {
         this._listeners.delete(cb);
     }
 
@@ -67,13 +67,13 @@ export class SpectrumAnalyzer {
                 'post-messages=true message-magnitude=true message-phase=false ! ' +
                 'fakesink sync=false');
         } catch (e) {
-            logError(e as object, 'gnome-island: could not build visualizer pipeline');
+            logError(e, 'gnome-island: could not build visualizer pipeline');
             this._pipeline = null;
             return;
         }
         const bus = this._pipeline.get_bus();
         bus.add_signal_watch();
-        this._busId = bus.connect('message::element', (_b: any, msg: any) => this._onMessage(msg));
+        this._busId = bus.connect('message::element', (_b, msg) => this._onMessage(msg));
         this._pipeline.set_state(gst.State.PLAYING);
     }
 
@@ -96,7 +96,7 @@ export class SpectrumAnalyzer {
         return this._pipeline !== null;
     }
 
-    private _onMessage(msg: any) {
+    _onMessage(msg) {
         const s = msg.get_structure();
         if (!s || s.get_name() !== 'spectrum')
             return;
@@ -112,10 +112,10 @@ export class SpectrumAnalyzer {
     }
 
     /** Groups linear FFT bands into bars on a logarithmic frequency scale. */
-    private _group(mags: number[]): number[] {
+    _group(mags) {
         const n = this._bars;
         const usable = Math.max(n, Math.floor(mags.length * MAX_BAND_FRACTION));
-        const levels: number[] = [];
+        const levels = [];
         for (let i = 0; i < n; i++) {
             const from = Math.floor(Math.pow(usable, i / n));
             const to = Math.max(from + 1, Math.floor(Math.pow(usable, (i + 1) / n)));
@@ -143,15 +143,14 @@ export class SpectrumAnalyzer {
  */
 export const VisualizerBars = GObject.registerClass(
 class VisualizerBars extends St.BoxLayout {
-    private _bars: St.Widget[] = [];
-    private _targets: number[] = [];
-    private _values: number[] = [];
-    private _timeline: Clutter.Timeline;
-    private _maxHeight = 16;
-    private _minHeight = 3;
-    private _color = '#ffffff';
+    _bars = [];
+    _targets = [];
+    _values = [];
+    _maxHeight = 16;
+    _minHeight = 3;
+    _color = '#ffffff';
 
-    constructor(count: number) {
+    constructor(count) {
         super({
             style_class: 'island-visualizer',
             y_align: Clutter.ActorAlign.CENTER,
@@ -164,13 +163,13 @@ class VisualizerBars extends St.BoxLayout {
         this.connect('destroy', () => this._timeline.stop());
     }
 
-    setColor(color: string) {
+    setColor(color) {
         this._color = color;
         for (const bar of this._bars)
             bar.set_style(`background-color: ${color};`);
     }
 
-    setCount(count: number) {
+    setCount(count) {
         for (const bar of this._bars)
             bar.destroy();
         this._bars = [];
@@ -188,14 +187,14 @@ class VisualizerBars extends St.BoxLayout {
         }
     }
 
-    setLevels(levels: number[]) {
+    setLevels(levels) {
         for (let i = 0; i < this._targets.length; i++)
             this._targets[i] = levels[i] ?? 0;
         if (this.mapped && !this._timeline.is_playing())
             this._timeline.start();
     }
 
-    private _tick() {
+    _tick() {
         const dt = Math.min(this._timeline.get_delta() / 1000, 0.05);
         let moving = false;
         for (let i = 0; i < this._bars.length; i++) {
@@ -213,5 +212,3 @@ class VisualizerBars extends St.BoxLayout {
             this._timeline.stop();
     }
 });
-
-export type VisualizerBarsType = InstanceType<typeof VisualizerBars>;

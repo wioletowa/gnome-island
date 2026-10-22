@@ -10,12 +10,9 @@ import St from 'gi://St';
  */
 export const SymmetricBox = GObject.registerClass(
 class SymmetricBox extends St.Widget {
-    left: St.BoxLayout;
-    right: St.BoxLayout;
-    private _center: Clutter.Actor | null = null;
-    private _hugEdges: boolean;
+    _center = null;
 
-    constructor(params: {style_class?: string, hugEdges?: boolean, name?: string} = {}) {
+    constructor(params = {}) {
         super({
             style_class: params.style_class ?? '',
             name: params.name ?? null,
@@ -32,7 +29,7 @@ class SymmetricBox extends St.Widget {
         return this._center;
     }
 
-    set center(actor: Clutter.Actor | null) {
+    set center(actor) {
         if (this._center)
             this.remove_child(this._center);
         this._center = actor;
@@ -40,30 +37,30 @@ class SymmetricBox extends St.Widget {
             this.add_child(actor);
     }
 
-    private _spacing(): number {
+    _spacing() {
         return this.get_theme_node().get_length('spacing');
     }
 
-    private _sideWidth(): number {
+    _sideWidth() {
         const [, l] = this.left.visible ? this.left.get_preferred_width(-1) : [0, 0];
         const [, r] = this.right.visible ? this.right.get_preferred_width(-1) : [0, 0];
         return Math.ceil(Math.max(l, r));
     }
 
-    private _centerWidth(): number {
+    _centerWidth() {
         if (!this._center?.visible)
             return 0;
         return Math.ceil(this._center.get_preferred_width(-1)[1]);
     }
 
-    vfunc_get_preferred_width(_forHeight: number): [number, number] {
+    vfunc_get_preferred_width(_forHeight) {
         const side = this._sideWidth();
         const gap = side > 0 ? this._spacing() : 0;
         const w = this._centerWidth() + 2 * (side + gap);
         return this.get_theme_node().adjust_preferred_width(w, w);
     }
 
-    vfunc_get_preferred_height(_forWidth: number): [number, number] {
+    vfunc_get_preferred_height(_forWidth) {
         let h = 0;
         for (const child of this.get_children()) {
             if (child.visible)
@@ -72,7 +69,7 @@ class SymmetricBox extends St.Widget {
         return this.get_theme_node().adjust_preferred_height(h, h);
     }
 
-    vfunc_allocate(box: Clutter.ActorBox) {
+    vfunc_allocate(box) {
         this.set_allocation(box);
         const content = this.get_theme_node().get_content_box(box);
         const w = content.get_width();
@@ -83,7 +80,7 @@ class SymmetricBox extends St.Widget {
         const cx = content.x1 + Math.floor((w - cw) / 2);
         const child = new Clutter.ActorBox();
 
-        const place = (actor: Clutter.Actor, x: number, width: number) => {
+        const place = (actor, x, width) => {
             const [, natH] = actor.get_preferred_height(width);
             const y = content.y1 + Math.floor((h - natH) / 2);
             child.set_origin(x, y);
@@ -102,5 +99,3 @@ class SymmetricBox extends St.Widget {
         place(this.right, Math.round(rx), Math.ceil(rw));
     }
 });
-
-export type SymmetricBoxType = InstanceType<typeof SymmetricBox>;

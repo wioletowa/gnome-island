@@ -4,25 +4,7 @@ import GObject from 'gi://GObject';
 import Shell from 'gi://Shell';
 import St from 'gi://St';
 
-import {Spring, SpringDriver, SpringParams} from './spring.js';
-
-export interface IslandMetrics {
-    topMargin: number;
-    bottomGap: number;
-    compactHeight: number;
-    expandedHeight: number;
-    hPadding: number;
-    bubbleGap: number;
-}
-
-interface ViewEntry {
-    actor: Clutter.Actor;
-    presence: Spring;
-    blur: Shell.BlurEffect | null;
-    /** Extra height this view wants over the compact height (e.g. 2 lines). */
-    height: number | null;
-}
-
+import {Spring, SpringDriver} from './spring.js';
 
 /**
  * The black capsule. Children (views) are allocated at their natural size
@@ -32,7 +14,7 @@ interface ViewEntry {
 const IslandPill = GObject.registerClass({
     Signals: {'pointer-changed': {}},
 }, class IslandPill extends St.Widget {
-    constructor(styleClass: string) {
+    constructor(styleClass) {
         super({
             style_class: styleClass,
             reactive: true,
@@ -46,12 +28,12 @@ const IslandPill = GObject.registerClass({
 
     pointerInside = false;
 
-    vfunc_enter_event(event: Clutter.Event): boolean {
+    vfunc_enter_event(event) {
         this._setInside(true);
         return super.vfunc_enter_event(event);
     }
 
-    vfunc_leave_event(event: Clutter.Event): boolean {
+    vfunc_leave_event(event) {
         const related = event.get_related();
         // Moving onto one of our own children is not leaving.
         if (!related || !this.contains(related))
@@ -59,14 +41,14 @@ const IslandPill = GObject.registerClass({
         return super.vfunc_leave_event(event);
     }
 
-    private _setInside(inside: boolean) {
+    _setInside(inside) {
         if (this.pointerInside === inside)
             return;
         this.pointerInside = inside;
         this.emit('pointer-changed');
     }
 
-    vfunc_allocate(box: Clutter.ActorBox) {
+    vfunc_allocate(box) {
         this.set_allocation(box);
         const w = box.get_width();
         const h = box.get_height();
@@ -88,25 +70,17 @@ const IslandPill = GObject.registerClass({
     }
 });
 
-type PillType = InstanceType<typeof IslandPill>;
-
-export type BubbleSide = 'left' | 'right';
-
 /**
  * A small capsule beside the island. It grows from a dot into a circle,
  * optionally widens (away from the island), and only then fades its
  * content in; hiding runs the same steps backwards.
  */
 class SideBubble {
-    readonly pill: PillType;
-    readonly side: BubbleSide;
-    readonly views = new Map<string, ViewEntry>();
-    size: Spring;
-    extra: Spring;
-    current: string | null = null;
+    views = new Map();
+    current = null;
     wanted = false;
 
-    constructor(side: BubbleSide, driver: SpringDriver, params: SpringParams) {
+    constructor(side, driver, params) {
         this.side = side;
         this.pill = new IslandPill(`island-pill island-bubble island-bubble-${side}`);
         this.pill.visible = false;
@@ -114,20 +88,20 @@ class SideBubble {
         this.extra = driver.add(new Spring(0, params));
     }
 
-    set(name: string | null) {
+    set(name) {
         if (name === (this.wanted ? this.current : null))
             return;
         if (name) {
             // Switching content while shown just crossfades inside.
             if (this.current && this.current !== name)
-                this.views.get(this.current)!.presence.target = 0;
+                this.views.get(this.current).presence.target = 0;
             this.current = name;
             this.pill.visible = true;
         }
         this.wanted = name !== null;
     }
 
-    stage(diameter: number, padding: number) {
+    stage(diameter, padding) {
         const entry = this.current ? this.views.get(this.current) : null;
         let extra = 0;
         if (entry) {
@@ -160,7 +134,7 @@ class SideBubble {
     }
 
     /** Places the bubble next to the pill spanning [pillX1, pillX2]. */
-    allocate(pillX1: number, pillX2: number, pillY: number, pillH: number, diameter: number, gap: number) {
+    allocate(pillX1, pillX2, pillY, pillH, diameter, gap) {
         const s = Math.max(0, Math.min(diameter * 1.2, this.size.value));
         const extra = Math.max(0, this.extra.value);
         const w = s + extra;
@@ -190,19 +164,13 @@ export const Island = GObject.registerClass({
         'key-escape': {},
     },
 }, class Island extends St.Widget {
-    pill!: PillType;
-    private _bubbles!: Record<BubbleSide, SideBubble>;
-    private _metrics!: IslandMetrics;
-    private _driver!: SpringDriver;
-    private _views = new Map<string, ViewEntry>();
-    private _current: string | null = null;
-    private _w!: Spring;
-    private _h!: Spring;
-    private _blurEnabled = true;
-    private _destroyed = false;
-    private _relayoutId = 0;
+    _views = new Map();
+    _current = null;
+    _blurEnabled = true;
+    _destroyed = false;
+    _relayoutId = 0;
 
-    constructor(metrics: IslandMetrics, params: SpringParams) {
+    constructor(metrics, params) {
         super({
             style_class: 'island-bar',
             reactive: false,
@@ -223,24 +191,24 @@ export const Island = GObject.registerClass({
         this.add_child(this._bubbles.right.pill);
         this.add_child(this.pill);
 
-        const emitClick = (p: PillType, button: number) => {
+        const emitClick = (p, button) => {
             if (p === this.pill)
                 this.emit('pill-clicked', button);
             else
                 this.emit('bubble-clicked', p === this._bubbles.left.pill ? 'left' : 'right');
         };
         for (const p of this.capsules) {
-            p.connect('button-release-event', (_a, event: Clutter.Event) => {
+            p.connect('button-release-event', (_a, event) => {
                 emitClick(p, event.get_button());
                 return Clutter.EVENT_PROPAGATE;
             });
-            p.connect('touch-event', (_a, event: Clutter.Event) => {
+            p.connect('touch-event', (_a, event) => {
                 if (event.type() === Clutter.EventType.TOUCH_END)
                     emitClick(p, 1);
                 return Clutter.EVENT_PROPAGATE;
             });
             p.connect('pointer-changed', () => this.emit('hover-changed', this.hovered));
-            p.connect('key-press-event', (_a, event: Clutter.Event) => {
+            p.connect('key-press-event', (_a, event) => {
                 if (event.get_key_symbol() === Clutter.KEY_Escape) {
                     this.emit('key-escape');
                     return Clutter.EVENT_STOP;
@@ -257,15 +225,15 @@ export const Island = GObject.registerClass({
     }
 
     /** The main pill and both bubbles (for styling and hover). */
-    get capsules(): PillType[] {
+    get capsules() {
         return [this.pill, this._bubbles.left.pill, this._bubbles.right.pill];
     }
 
-    get hovered(): boolean {
+    get hovered() {
         return this.capsules.some(p => p.pointerInside);
     }
 
-    private _allViews(): ViewEntry[] {
+    _allViews() {
         return [...this._views.values(), ...this._bubbles.left.views.values(),
             ...this._bubbles.right.views.values()];
     }
@@ -274,17 +242,17 @@ export const Island = GObject.registerClass({
         return this._current;
     }
 
-    setMetrics(metrics: IslandMetrics) {
+    setMetrics(metrics) {
         this._metrics = metrics;
         this.queue_relayout();
         this.retarget();
     }
 
-    setSpringParams(params: SpringParams) {
+    setSpringParams(params) {
         this._driver.setParams(params);
     }
 
-    setBlurEnabled(enabled: boolean) {
+    setBlurEnabled(enabled) {
         this._blurEnabled = enabled;
         for (const e of this._allViews()) {
             if (e.blur)
@@ -292,24 +260,24 @@ export const Island = GObject.registerClass({
         }
     }
 
-    vfunc_get_preferred_height(_forWidth: number): [number, number] {
+    vfunc_get_preferred_height(_forWidth) {
         const m = this._metrics;
         const h = m.topMargin + Math.max(m.compactHeight, m.expandedHeight) + m.bottomGap;
         return [h, h];
     }
 
-    vfunc_get_preferred_width(_forHeight: number): [number, number] {
+    vfunc_get_preferred_width(_forHeight) {
         return [0, 0];
     }
 
-    vfunc_allocate(box: Clutter.ActorBox) {
+    vfunc_allocate(box) {
         this.set_allocation(box);
         const width = box.get_width();
         const m = this._metrics;
 
         // Even sizes around an integer centre: both edges move by the same
         // whole pixel each frame, so nothing wobbles.
-        const even = (v: number) => Math.max(0, 2 * Math.round(v / 2));
+        const even = (v) => Math.max(0, 2 * Math.round(v / 2));
         const pw = even(this._w.value);
         const ph = even(this._h.value);
         const cx = Math.floor(width / 2);
@@ -326,12 +294,12 @@ export const Island = GObject.registerClass({
             b.allocate(x0, x0 + pw, y0, ph, m.compactHeight, m.bubbleGap);
     }
 
-    addView(name: string, actor: Clutter.Actor, opts: {bubble?: BubbleSide, height?: number} = {}) {
+    addView(name, actor, opts = {}) {
         const map = opts.bubble ? this._bubbles[opts.bubble].views : this._views;
         const parent = opts.bubble ? this._bubbles[opts.bubble].pill : this.pill;
         const presence = this._driver.add(new Spring(0));
         presence.params = this._w.params;
-        let blur: Shell.BlurEffect | null = null;
+        let blur = null;
         blur = new Shell.BlurEffect({mode: Shell.BlurMode.ACTOR, radius: 0, brightness: 1});
         blur.enabled = false;
         actor.add_effect_with_name('island-blur', blur);
@@ -345,7 +313,7 @@ export const Island = GObject.registerClass({
         actor.connect('notify::allocation', () => this._queueRetarget());
     }
 
-    setViewHeight(name: string, height: number | null) {
+    setViewHeight(name, height) {
         const e = this._views.get(name);
         if (!e)
             return;
@@ -353,7 +321,7 @@ export const Island = GObject.registerClass({
         this.retarget();
     }
 
-    setView(name: string) {
+    setView(name) {
         if (this._current === name)
             return;
         this._current = name;
@@ -367,12 +335,12 @@ export const Island = GObject.registerClass({
         this.retarget();
     }
 
-    setBubbleView(side: BubbleSide, name: string | null) {
+    setBubbleView(side, name) {
         this._bubbles[side].set(name);
         this.retarget();
     }
 
-    private _queueRetarget() {
+    _queueRetarget() {
         if (this._relayoutId || this._destroyed)
             return;
         this._relayoutId = GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
@@ -402,7 +370,7 @@ export const Island = GObject.registerClass({
         this._driver.kick();
     }
 
-    private _applyPresence(e: ViewEntry) {
+    _applyPresence(e) {
         const p = Math.max(0, Math.min(1, e.presence.value));
         const visible = p > 0.01 || e.presence.target > 0;
         e.actor.visible = visible;
@@ -423,13 +391,13 @@ export const Island = GObject.registerClass({
         }
     }
 
-    private _stageBubbles() {
+    _stageBubbles() {
         for (const b of Object.values(this._bubbles))
             b.stage(this._metrics.compactHeight, this._metrics.hPadding);
         this._driver.kick();
     }
 
-    private _onFrame() {
+    _onFrame() {
         for (const e of this._views.values())
             this._applyPresence(e);
         this._stageBubbles();
@@ -453,5 +421,3 @@ export const Island = GObject.registerClass({
         this.queue_relayout();
     }
 });
-
-export type IslandType = InstanceType<typeof Island>;

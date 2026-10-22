@@ -6,30 +6,21 @@ import St from 'gi://St';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
 import {SymmetricBox} from './symmetric.js';
-import type {ClockWidgetType} from './views.js';
-
-export type SlotName = 'workspaces' | 'clock' | 'keyboard' | 'tray' | 'quick-settings';
 
 /** Slots that can go on either side; the clock is always in the middle. */
-export type SideSlot = Exclude<SlotName, 'clock'>;
-export const SIDE_SLOTS: SideSlot[] = ['workspaces', 'keyboard', 'tray', 'quick-settings'];
+export const SIDE_SLOTS = ['workspaces', 'keyboard', 'tray', 'quick-settings'];
 
 /** Panel roles replaced by the island's privacy bubble. */
 const HIDDEN_ROLES = ['screenRecording', 'screenSharing'];
 /** Quick Settings system indicators replaced by the privacy bubble. */
 const QS_PRIVACY_INDICATORS = ['_remoteAccess', '_camera', '_volumeInput'];
 
-const ROLE_SLOTS: Record<string, SlotName> = {
+const ROLE_SLOTS = {
     activities: 'workspaces',
     dateMenu: 'clock',
     keyboard: 'keyboard',
     quickSettings: 'quick-settings',
 };
-
-interface Origin {
-    box: St.BoxLayout;
-    index: number;
-}
 
 /**
  * The row of panel indicators shown inside the expanded island: the clock
@@ -40,28 +31,27 @@ interface Origin {
  */
 export const ExpandedRow = GObject.registerClass(
 class ExpandedRow extends SymmetricBox {
-    slots!: Map<SlotName, St.BoxLayout>;
-    private _leading: Clutter.Actor | null = null;
-    private _trailing: Clutter.Actor | null = null;
+    _leading = null;
+    _trailing = null;
 
     constructor() {
         // Side items stack against the outer corners, the clock stays centred.
         super({name: 'panel', style_class: 'island-expanded-row', hugEdges: true});
         this.slots = new Map();
-        for (const name of [...SIDE_SLOTS, 'clock' as SlotName]) {
+        for (const name of [...SIDE_SLOTS, 'clock']) {
             const box = new St.BoxLayout({
                 style_class: `island-slot island-slot-${name}`,
                 y_align: Clutter.ActorAlign.CENTER,
             });
             this.slots.set(name, box);
         }
-        this.center = this.slots.get('clock')!;
+        this.center = this.slots.get('clock');
         this.setLayout(['workspaces'], ['keyboard', 'tray', 'quick-settings']);
     }
 
-    setLayout(left: SideSlot[], right: SideSlot[]) {
-        const seen = new Set<SideSlot>();
-        const clean = (list: SideSlot[]) => list.filter(n => {
+    setLayout(left, right) {
+        const seen = new Set();
+        const clean = (list) => list.filter(n => {
             if (seen.has(n) || !SIDE_SLOTS.includes(n))
                 return false;
             seen.add(n);
@@ -79,24 +69,22 @@ class ExpandedRow extends SymmetricBox {
                 box.get_parent()?.remove_child(box);
         }
         for (const n of l)
-            this.left.add_child(this.slots.get(n)!);
+            this.left.add_child(this.slots.get(n));
         for (const n of r)
-            this.right.add_child(this.slots.get(n)!);
+            this.right.add_child(this.slots.get(n));
         if (this._leading)
             this.left.set_child_below_sibling(this._leading, null);
         if (this._trailing)
             this.right.set_child_above_sibling(this._trailing, null);
     }
 
-    setEnds(leading: Clutter.Actor, trailing: Clutter.Actor) {
+    setEnds(leading, trailing) {
         this._leading = leading;
         this._trailing = trailing;
         this.left.insert_child_at_index(leading, 0);
         this.right.add_child(trailing);
     }
 });
-
-export type ExpandedRowType = InstanceType<typeof ExpandedRow>;
 
 /**
  * Takes every indicator out of the hidden top bar and moves it into the
@@ -105,34 +93,33 @@ export type ExpandedRowType = InstanceType<typeof ExpandedRow>;
  * disable.
  */
 export class PanelBridge {
-    private _origins = new Map<Clutter.Actor, Origin>();
-    private _row: ExpandedRowType | null = null;
-    private _boxes: St.BoxLayout[];
-    private _signals: [GObject.Object, number][] = [];
-    private _idleId = 0;
-    private _clock: ClockWidgetType | null = null;
+    _origins = new Map();
+    _row = null;
+    _signals = [];
+    _idleId = 0;
+    _clock = null;
     /** Unparented holder for indicators the island replaces. */
-    private _sink = new St.BoxLayout();
-    private _qsWanted = new Map<Clutter.Actor, boolean>();
-    private _forcing = false;
-    private _pad: Clutter.Actor | null = null;
+    _sink = new St.BoxLayout();
+    _qsWanted = new Map();
+    _forcing = false;
+    _pad = null;
 
     constructor() {
-        const panel = Main.panel as any;
+        const panel = Main.panel;
         this._boxes = [panel._leftBox, panel._centerBox, panel._rightBox];
         for (const box of this._boxes) {
             this._signals.push([box, box.connect('child-added', () => this._queueSync())]);
         }
         // Quick Settings builds its indicators asynchronously, so also catch
         // ones that appear after we start.
-        const qsBox = (Main.panel.statusArea as any).quickSettings?._indicators;
+        const qsBox = Main.panel.statusArea.quickSettings?._indicators;
         if (qsBox)
             this._signals.push([qsBox, qsBox.connect('child-added', () => this._hideQuickSettingsPrivacy())]);
         this._hideQuickSettingsPrivacy();
     }
 
     /** Moves all indicators into `row` (called when an island expands). */
-    attach(row: ExpandedRowType) {
+    attach(row) {
         if (this._row === row) {
             this._sync();
             return;
@@ -142,7 +129,7 @@ export class PanelBridge {
         this._sync();
         if (previous) {
             for (const [name, box] of previous.slots) {
-                const target = row.slots.get(name)!;
+                const target = row.slots.get(name);
                 for (const child of box.get_children()) {
                     box.remove_child(child);
                     target.add_child(child);
@@ -156,13 +143,13 @@ export class PanelBridge {
      * GNOME's own unread-messages dot moves into the clock's right side so
      * it keeps working exactly as before.
      */
-    setClock(clock: ClockWidgetType | null) {
-        const dateMenu = (Main.panel.statusArea as any).dateMenu;
+    setClock(clock) {
+        const dateMenu = Main.panel.statusArea.dateMenu;
         if (!dateMenu)
             return;
-        const label: St.Label = dateMenu._clockDisplay;
-        const dot: St.Icon = dateMenu._indicator;
-        const box = label.get_parent() as St.BoxLayout;
+        const label = dateMenu._clockDisplay;
+        const dot = dateMenu._indicator;
+        const box = label.get_parent();
 
         if (this._clock) {
             this._clock.setIndicator(null);
@@ -184,7 +171,7 @@ export class PanelBridge {
             this._clock = clock;
         } else {
             if (dot.get_parent())
-                dot.get_parent()!.remove_child(dot);
+                dot.get_parent().remove_child(dot);
             box.add_child(dot);
             if (this._pad)
                 box.insert_child_at_index(this._pad, 0);
@@ -194,11 +181,11 @@ export class PanelBridge {
     }
 
     /** GNOME's unread-messages dot, for mirroring in the collapsed island. */
-    get messagesDot(): St.Icon | null {
-        return (Main.panel.statusArea as any).dateMenu?._indicator ?? null;
+    get messagesDot() {
+        return Main.panel.statusArea.dateMenu?._indicator ?? null;
     }
 
-    private _queueSync() {
+    _queueSync() {
         if (this._idleId)
             return;
         // Let addToStatusArea finish registering the role first.
@@ -209,8 +196,8 @@ export class PanelBridge {
         });
     }
 
-    private _slotFor(actor: Clutter.Actor): SlotName | 'hidden' {
-        const statusArea = Main.panel.statusArea as Record<string, any>;
+    _slotFor(actor) {
+        const statusArea = Main.panel.statusArea;
         for (const role in statusArea) {
             if (statusArea[role]?.container === actor) {
                 // Recording/sharing are shown by the island's privacy bubble.
@@ -227,10 +214,10 @@ export class PanelBridge {
      * out of the Quick Settings button; the island's bubble shows them.
      * Their intended visibility is remembered so disable can restore it.
      */
-    private _hideQuickSettingsPrivacy() {
-        const qs = (Main.panel.statusArea as any).quickSettings;
+    _hideQuickSettingsPrivacy() {
+        const qs = Main.panel.statusArea.quickSettings;
         for (const name of QS_PRIVACY_INDICATORS) {
-            const ind: Clutter.Actor | undefined = qs?.[name];
+            const ind = qs?.[name];
             if (!ind || this._qsWanted.has(ind))
                 continue;
             this._qsWanted.set(ind, ind.visible);
@@ -250,7 +237,7 @@ export class PanelBridge {
         }
     }
 
-    private _restoreQuickSettingsPrivacy() {
+    _restoreQuickSettingsPrivacy() {
         for (const [ind, wanted] of this._qsWanted) {
             ind.disconnectObject(this);
             ind.visible = wanted;
@@ -258,7 +245,7 @@ export class PanelBridge {
         this._qsWanted.clear();
     }
 
-    private _sync() {
+    _sync() {
         if (!this._row)
             return;
         for (const box of this._boxes) {
@@ -269,7 +256,7 @@ export class PanelBridge {
                     child.connectObject('destroy', () => this._origins.delete(child), this);
                 }
                 const name = this._slotFor(child);
-                const slot = name === 'hidden' ? this._sink : this._row!.slots.get(name)!;
+                const slot = name === 'hidden' ? this._sink : this._row.slots.get(name);
                 box.remove_child(child);
                 slot.add_child(child);
             });

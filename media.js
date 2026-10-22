@@ -7,15 +7,6 @@ import {MprisPlayer} from 'resource:///org/gnome/shell/ui/mpris.js';
 
 const MPRIS_PREFIX = 'org.mpris.MediaPlayer2.';
 
-export interface MediaState {
-    player: any;
-    playing: boolean;
-    title: string;
-    artists: string[];
-    /** Local file URI of the cover art, or null while loading / missing. */
-    coverUri: string | null;
-}
-
 /**
  * Tracks MPRIS players and picks the one to show: the player that most
  * recently started playing. Emits `changed` whenever the shown state changes.
@@ -23,14 +14,13 @@ export interface MediaState {
 export const MediaWatcher = GObject.registerClass({
     Signals: {'changed': {}},
 }, class MediaWatcher extends GObject.Object {
-    private _players = new Map<string, any>();
-    private _lastChange = new Map<any, number>();
-    private _lastStatus = new Map<any, boolean>();
-    private _subscription = 0;
-    private _covers: CoverCache;
-    private _coverUri: string | null = null;
-    private _coverFor = '';
-    private _destroyed = false;
+    _players = new Map();
+    _lastChange = new Map();
+    _lastStatus = new Map();
+    _subscription = 0;
+    _coverUri = null;
+    _coverFor = '';
+    _destroyed = false;
 
     constructor() {
         super();
@@ -40,7 +30,7 @@ export const MediaWatcher = GObject.registerClass({
             'org.freedesktop.DBus', 'org.freedesktop.DBus', 'NameOwnerChanged',
             '/org/freedesktop/DBus', null, Gio.DBusSignalFlags.NONE,
             (_c, _s, _p, _i, _sig, params) => {
-                const [name, oldOwner, newOwner] = params.deepUnpack() as string[];
+                const [name, oldOwner, newOwner] = params.deepUnpack();
                 if (!name.startsWith(MPRIS_PREFIX))
                     return;
                 if (oldOwner)
@@ -54,18 +44,18 @@ export const MediaWatcher = GObject.registerClass({
                 if (this._destroyed)
                     return;
                 try {
-                    const [names] = bus.call_finish(res).deepUnpack() as [string[]];
+                    const [names] = bus.call_finish(res).deepUnpack();
                     for (const name of names) {
                         if (name.startsWith(MPRIS_PREFIX))
                             this._addPlayer(name);
                     }
                 } catch (e) {
-                    logError(e as object, 'gnome-island: ListNames');
+                    logError(e, 'gnome-island: ListNames');
                 }
             });
     }
 
-    private _addPlayer(name: string) {
+    _addPlayer(name) {
         if (this._players.has(name))
             return;
         const player = new MprisPlayer(name);
@@ -76,7 +66,7 @@ export const MediaWatcher = GObject.registerClass({
             this);
     }
 
-    private _removePlayer(name: string) {
+    _removePlayer(name) {
         const player = this._players.get(name);
         if (!player)
             return;
@@ -87,7 +77,7 @@ export const MediaWatcher = GObject.registerClass({
         this.emit('changed');
     }
 
-    private _onPlayerChanged(player: any) {
+    _onPlayerChanged(player) {
         const playing = player.status === 'Playing';
         const last = this._lastStatus.get(player);
         if (last !== playing) {
@@ -98,8 +88,8 @@ export const MediaWatcher = GObject.registerClass({
     }
 
     /** The player to display: playing ones first, then most recently changed. */
-    get activePlayer(): any {
-        let best: any = null;
+    get activePlayer() {
+        let best = null;
         let bestPlaying = false;
         let bestTime = -Infinity;
         for (const player of this._players.values()) {
@@ -116,7 +106,7 @@ export const MediaWatcher = GObject.registerClass({
         return best;
     }
 
-    get state(): MediaState | null {
+    get state() {
         const player = this.activePlayer;
         if (!player)
             return null;
@@ -130,7 +120,7 @@ export const MediaWatcher = GObject.registerClass({
         };
     }
 
-    private _updateCover(url: string) {
+    _updateCover(url) {
         if (url === this._coverFor)
             return;
         this._coverFor = url;
@@ -142,7 +132,7 @@ export const MediaWatcher = GObject.registerClass({
                 return;
             this._coverUri = uri;
             this.emit('changed');
-        }).catch(e => logError(e as object, 'gnome-island: cover'));
+        }).catch(e => logError(e, 'gnome-island: cover'));
     }
 
     destroy() {
@@ -159,31 +149,28 @@ export const MediaWatcher = GObject.registerClass({
     }
 });
 
-export type MediaWatcherType = InstanceType<typeof MediaWatcher>;
-
 /**
  * Turns MPRIS art URLs into local file URIs that St can use as a
  * background image. Remote art (e.g. Spotify) is downloaded once into the
  * user cache.
  */
 class CoverCache {
-    private _session: any = null;
-    private _dir: string;
-    private _cancellable = new Gio.Cancellable();
+    _session = null;
+    _cancellable = new Gio.Cancellable();
 
     constructor() {
         this._dir = GLib.build_filenamev([GLib.get_user_cache_dir(), 'gnome-island', 'covers']);
         GLib.mkdir_with_parents(this._dir, 0o700);
     }
 
-    async resolve(url: string): Promise<string | null> {
+    async resolve(url) {
         if (url.startsWith('file://'))
             return url;
         if (!url.startsWith('http://') && !url.startsWith('https://'))
             return null;
 
         const name = GLib.compute_checksum_for_string(GLib.ChecksumType.SHA1, url, -1);
-        const path = GLib.build_filenamev([this._dir, name!]);
+        const path = GLib.build_filenamev([this._dir, name]);
         const file = Gio.File.new_for_path(path);
         if (file.query_exists(null))
             return file.get_uri();
@@ -192,10 +179,10 @@ class CoverCache {
         const msg = Soup.Message.new('GET', url);
         if (!msg)
             return null;
-        const bytes = await new Promise<GLib.Bytes>((resolve, reject) => {
-            this._session!.send_and_read_async(msg, GLib.PRIORITY_LOW, this._cancellable, (s, res) => {
+        const bytes = await new Promise((resolve, reject) => {
+            this._session.send_and_read_async(msg, GLib.PRIORITY_LOW, this._cancellable, (s, res) => {
                 try {
-                    resolve(s!.send_and_read_finish(res));
+                    resolve(s.send_and_read_finish(res));
                 } catch (e) {
                     reject(e);
                 }
@@ -203,11 +190,11 @@ class CoverCache {
         });
         if (msg.get_status() !== Soup.Status.OK)
             return null;
-        await new Promise<void>((resolve, reject) => {
+        await new Promise((resolve, reject) => {
             file.replace_contents_bytes_async(bytes, null, false,
                 Gio.FileCreateFlags.REPLACE_DESTINATION, this._cancellable, (f, res) => {
                     try {
-                        f!.replace_contents_finish(res);
+                        f.replace_contents_finish(res);
                         resolve();
                     } catch (e) {
                         reject(e);
@@ -219,11 +206,11 @@ class CoverCache {
     }
 
     /** Keeps the cache small: drop the oldest files beyond 64 entries. */
-    private _prune() {
+    _prune() {
         try {
             const dir = Gio.File.new_for_path(this._dir);
             const en = dir.enumerate_children('standard::name,time::modified', Gio.FileQueryInfoFlags.NONE, null);
-            const files: [string, number][] = [];
+            const files = [];
             let info;
             while ((info = en.next_file(null)))
                 files.push([info.get_name(), info.get_attribute_uint64('time::modified')]);
@@ -231,7 +218,7 @@ class CoverCache {
             for (const [n] of files.slice(64))
                 dir.get_child(n).delete(null);
         } catch (e) {
-            logError(e as object, 'gnome-island: prune covers');
+            logError(e, 'gnome-island: prune covers');
         }
     }
 

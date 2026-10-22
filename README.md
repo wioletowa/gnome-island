@@ -18,11 +18,11 @@
 
 ## Сборка и установка
 
-Нужны Node.js, `glib-compile-schemas` и `msgfmt`.
+Расширение написано на чистом GNOME JavaScript (GJS, ES-модули), сборка не нужна.
+Для установки нужны `make`, `unzip` и `glib-compile-schemas`:
 
 ```bash
-npm install
-npm run install-ext
+make install
 ```
 
 Затем перезайдите в сессию (Wayland) и включите расширение:
@@ -31,7 +31,7 @@ npm run install-ext
 gnome-extensions enable gnome-island@whyoolw
 ```
 
-Архив для extensions.gnome.org: `npm run pack`.
+Архив для extensions.gnome.org: `make pack` (появится в `dist/`).
 
 ## Лицензия
 
